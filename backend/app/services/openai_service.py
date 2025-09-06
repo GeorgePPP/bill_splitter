@@ -82,12 +82,16 @@ class OpenAIService:
   "notes": "Any additional notes (or null)"
 }}
 
-IMPORTANT RULES:
-1. The grand_total field is MANDATORY - it must be the final amount payable from the receipt
-2. Extract ALL taxes and charges into the taxes_or_charges array
-3. If subtotal is not explicitly shown, calculate it as: sum of all item total_price values
-4. Do NOT calculate percentages - only extract amounts as shown
+CRITICAL EXTRACTION RULES:
+1. The grand_total field is MANDATORY - it must be the FINAL amount payable/total amount/amount payable from the receipt
+2. Extract ALL taxes, charges, service charges, and fees into the taxes_or_charges array
+3. For subtotal extraction:
+   - If "Subtotal", "Amount before tax", "Net amount", or similar is explicitly shown, use that value
+   - If NOT explicitly shown, set subtotal to 0.00 (DO NOT calculate it yourself)
+   - Look for terms like: "Subtotal", "Sub Total", "Amount Before Tax", "Net Amount", "Before Tax", "Taxable Amount"
+4. Do NOT perform any calculations - only extract amounts exactly as shown on the receipt
 5. Ensure items have quantity, unit_price, and total_price fields
+6. The grand_total is the authoritative final amount - taxes may already be included in this amount
 
 Receipt text:
 {raw_text}
@@ -521,8 +525,8 @@ Return only the JSON object:"""
 
     def _post_process_and_validate(self, data: Dict[str, Any], operation_id: str) -> Dict[str, Any]:
         """
-        Post-process extracted data and validate calculations.
-        Calculate tax percentages and ensure grand_total matches calculations.
+        Post-process extracted data using the dedicated validation service.
+        OpenAI service now only handles LLM extraction and parsing.
         
         Args:
             data: Extracted receipt data dictionary
@@ -532,151 +536,16 @@ Return only the JSON object:"""
             Validated and corrected data dictionary
             
         Raises:
-            ValueError: If calculations cannot be reconciled with grand_total
+            ValueError: If calculations cannot be reconciled
         """
-        logger.info(f"[{operation_id}] Starting post-processing and validation", extra={
+        from app.services.receipt_validator import receipt_validator_service
+        
+        logger.info(f"[{operation_id}] Delegating validation to receipt validator service", extra={
             "operation_id": operation_id,
-            "step": "post_process_start"
+            "step": "delegate_validation"
         })
         
-        # Extract values
-        items = data.get("items", [])
-        subtotal = float(data.get("subtotal", 0.0))
-        taxes_or_charges = data.get("taxes_or_charges", [])
-        grand_total = float(data.get("grand_total", 0.0))
-        
-        # Step 1: Calculate items total
-        calculated_items_total = sum(float(item.get("total_price", 0.0)) for item in items)
-        logger.info(f"[{operation_id}] Step 1 - Items calculation", extra={
-            "operation_id": operation_id,
-            "step": "items_calculation",
-            "items_count": len(items),
-            "calculated_items_total": calculated_items_total,
-            "provided_subtotal": subtotal,
-            "items_details": [{"name": item.get("name"), "quantity": item.get("quantity"), 
-                             "unit_price": item.get("unit_price"), "total_price": item.get("total_price")} 
-                            for item in items]
-        })
-        
-        # Step 2: Validate or adjust subtotal
-        subtotal_diff = abs(calculated_items_total - subtotal)
-        if subtotal_diff > 0.01:  # Allow 1 cent tolerance for rounding
-            logger.warning(f"[{operation_id}] Subtotal mismatch detected", extra={
-                "operation_id": operation_id,
-                "step": "subtotal_adjustment",
-                "calculated_items_total": calculated_items_total,
-                "provided_subtotal": subtotal,
-                "difference": subtotal_diff,
-                "action": "adjusting_subtotal_to_match_items"
-            })
-            subtotal = calculated_items_total
-            data["subtotal"] = subtotal
-        
-        # Step 3: Calculate tax percentages and validate amounts
-        for tax_charge in taxes_or_charges:
-            amount = float(tax_charge.get("amount", 0.0))
-            if subtotal > 0:
-                calculated_percent = round((amount / subtotal) * 100, 2)
-                tax_charge["percent"] = calculated_percent
-                logger.info(f"[{operation_id}] Step 3 - Tax/charge percentage calculation", extra={
-                    "operation_id": operation_id,
-                    "step": "tax_percentage_calculation",
-                    "tax_name": tax_charge.get("name"),
-                    "amount": amount,
-                    "subtotal": subtotal,
-                    "calculated_percent": calculated_percent
-                })
-            else:
-                tax_charge["percent"] = None
-                logger.warning(f"[{operation_id}] Cannot calculate percentage for zero subtotal", extra={
-                    "operation_id": operation_id,
-                    "tax_name": tax_charge.get("name"),
-                    "amount": amount
-                })
-        
-        # Step 4: Calculate total taxes and charges
-        total_taxes_charges = sum(float(tax_charge.get("amount", 0.0)) for tax_charge in taxes_or_charges)
-        logger.info(f"[{operation_id}] Step 4 - Total taxes and charges", extra={
-            "operation_id": operation_id,
-            "step": "taxes_charges_calculation",
-            "taxes_charges_count": len(taxes_or_charges),
-            "total_taxes_charges": total_taxes_charges,
-            "taxes_charges_details": [{"name": tc.get("name"), "amount": tc.get("amount"), 
-                                     "percent": tc.get("percent")} for tc in taxes_or_charges]
-        })
-        
-        # Step 5: Calculate expected grand total
-        calculated_grand_total = subtotal + total_taxes_charges
-        grand_total_diff = abs(calculated_grand_total - grand_total)
-        
-        logger.info(f"[{operation_id}] Step 5 - Grand total validation", extra={
-            "operation_id": operation_id,
-            "step": "grand_total_validation",
-            "subtotal": subtotal,
-            "total_taxes_charges": total_taxes_charges,
-            "calculated_grand_total": calculated_grand_total,
-            "provided_grand_total": grand_total,
-            "difference": grand_total_diff,
-            "calculation_formula": f"{subtotal} + {total_taxes_charges} = {calculated_grand_total}"
-        })
-        
-        # Step 6: Handle grand total mismatch
-        if grand_total_diff > 0.01:  # Allow 1 cent tolerance for rounding
-            logger.error(f"[{operation_id}] Grand total calculation mismatch", extra={
-                "operation_id": operation_id,
-                "step": "grand_total_mismatch",
-                "calculated_grand_total": calculated_grand_total,
-                "provided_grand_total": grand_total,
-                "difference": grand_total_diff,
-                "tolerance_exceeded": True
-            })
-            
-            # Try to adjust subtotal to match grand total (prioritize grand_total as ground truth)
-            adjusted_subtotal = grand_total - total_taxes_charges
-            if adjusted_subtotal >= 0:
-                logger.info(f"[{operation_id}] Adjusting subtotal to reconcile with grand_total", extra={
-                    "operation_id": operation_id,
-                    "step": "subtotal_reconciliation",
-                    "original_subtotal": subtotal,
-                    "adjusted_subtotal": adjusted_subtotal,
-                    "grand_total": grand_total,
-                    "total_taxes_charges": total_taxes_charges
-                })
-                data["subtotal"] = adjusted_subtotal
-                
-                # Recalculate tax percentages with new subtotal
-                if adjusted_subtotal > 0:
-                    for tax_charge in taxes_or_charges:
-                        amount = float(tax_charge.get("amount", 0.0))
-                        recalculated_percent = round((amount / adjusted_subtotal) * 100, 2)
-                        tax_charge["percent"] = recalculated_percent
-                        logger.info(f"[{operation_id}] Recalculated tax percentage", extra={
-                            "operation_id": operation_id,
-                            "tax_name": tax_charge.get("name"),
-                            "amount": amount,
-                            "adjusted_subtotal": adjusted_subtotal,
-                            "recalculated_percent": recalculated_percent
-                        })
-            else:
-                error_msg = f"Cannot reconcile calculations: grand_total ({grand_total}) is less than taxes_charges ({total_taxes_charges})"
-                logger.error(f"[{operation_id}] {error_msg}", extra={
-                    "operation_id": operation_id,
-                    "step": "reconciliation_failed",
-                    "grand_total": grand_total,
-                    "total_taxes_charges": total_taxes_charges,
-                    "would_be_negative_subtotal": adjusted_subtotal
-                })
-                raise ValueError(error_msg)
-        
-        logger.info(f"[{operation_id}] Post-processing completed successfully", extra={
-            "operation_id": operation_id,
-            "step": "post_process_complete",
-            "final_subtotal": data.get("subtotal"),
-            "final_grand_total": grand_total,
-            "taxes_charges_with_percentages": len([tc for tc in taxes_or_charges if tc.get("percent") is not None])
-        })
-        
-        return data
+        return receipt_validator_service.validate_and_process_receipt(data, operation_id)
 
 # Global OpenAI service instance
 openai_service = OpenAIService()

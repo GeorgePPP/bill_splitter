@@ -42,6 +42,9 @@ export const useCalculations = () => {
     method: 'proportional' | 'equal' = 'proportional'
   ) => {
     try {
+      // CRITICAL: The grand_total is the final amount payable - no additional calculations needed
+      const finalTotal = receiptData.grand_total;
+      
       // Calculate each person's subtotal from assigned items
       const personSubtotals = participants.map(person => {
         const assignedItems = assignments
@@ -51,7 +54,7 @@ export const useCalculations = () => {
         return calculateSubtotal(assignedItems);
       });
 
-      // Calculate total taxes and charges for validation (if needed later)
+      const totalItemsSubtotal = personSubtotals.reduce((sum, subtotal) => sum + subtotal, 0);
       
       // For backward compatibility, separate taxes from service charges based on name
       const tax = receiptData.taxes_or_charges
@@ -62,55 +65,72 @@ export const useCalculations = () => {
         .filter(tc => tc.name.toLowerCase().includes('service') || tc.name.toLowerCase().includes('charge'))
         .reduce((sum, tc) => sum + tc.amount, 0);
 
-      // Calculate tax distribution
-      const taxDistribution = method === 'proportional' 
-        ? distributeAmount(personSubtotals, tax, 'proportional')
-        : distributeAmount(personSubtotals, tax, 'equal');
-
-      // Calculate service charge distribution
-      const serviceChargeDistribution = method === 'proportional'
-        ? distributeAmount(personSubtotals, serviceCharge, 'proportional')
-        : distributeAmount(personSubtotals, serviceCharge, 'equal');
-
-      // For now, assume no discount (can be added later if needed)
-      const discountDistribution = participants.map(() => 0);
-
-      // Create person splits
+      // Determine if this is tax-inclusive or tax-exclusive based on validation info
+      const isGrandTotalEqualToItems = Math.abs(totalItemsSubtotal - finalTotal) <= 0.01;
+      const taxScenario = isGrandTotalEqualToItems ? 'tax_inclusive' : 'tax_exclusive';
+      
+      // Calculate person splits based on their proportion of the FINAL TOTAL
       const personSplits: PersonSplit[] = participants.map((person, index) => {
         const assignedItems = assignments
           .filter(assignment => assignment.assignedTo === person.id)
           .map(assignment => assignment.item);
 
-        const subtotal = personSubtotals[index];
-        const taxShare = roundToCents(taxDistribution[index]);
-        const serviceChargeShare = roundToCents(serviceChargeDistribution[index]);
-        const discountShare = roundToCents(discountDistribution[index]);
-        const total = roundToCents(subtotal + taxShare + serviceChargeShare - discountShare);
+        const itemsSubtotal = personSubtotals[index];
+        const proportion = totalItemsSubtotal > 0 ? itemsSubtotal / totalItemsSubtotal : 0;
+        
+        // Each person pays their proportion of the FINAL TOTAL (grand_total)
+        const personFinalTotal = roundToCents(finalTotal * proportion);
+        
+        // For display purposes, calculate what their tax/service charge "share" would be
+        // But these are just for display - the actual payment is personFinalTotal
+        let taxShare = 0;
+        let serviceChargeShare = 0;
+        
+        if (taxScenario === 'tax_exclusive') {
+          // In tax-exclusive scenario, we can show tax/service breakdown
+          taxShare = roundToCents(tax * proportion);
+          serviceChargeShare = roundToCents(serviceCharge * proportion);
+        } else {
+          // In tax-inclusive scenario, taxes are already included in the final total
+          // Show them as 0 since they're already included in the item prices
+          taxShare = 0;
+          serviceChargeShare = 0;
+        }
 
         return {
           person_id: person.id,
           person_name: person.name,
           items: assignedItems,
-          subtotal,
+          subtotal: itemsSubtotal,
           tax_share: taxShare,
           service_charge_share: serviceChargeShare,
-          discount_share: discountShare,
-          total,
+          discount_share: 0, // For now, assume no discount
+          total: personFinalTotal, // This is what they actually pay
         };
       });
 
-      const totalBill = personSplits.reduce((sum, split) => sum + split.total, 0);
+      // Validation: ensure all person totals add up to grand total
+      const calculatedTotal = personSplits.reduce((sum, split) => sum + split.total, 0);
+      const totalDifference = Math.abs(calculatedTotal - finalTotal);
+      
+      if (totalDifference > 0.01) {
+        // Adjust the largest split to account for rounding differences
+        const largestSplit = personSplits.reduce((max, split) => 
+          split.total > max.total ? split : max, personSplits[0]);
+        largestSplit.total = roundToCents(largestSplit.total + (finalTotal - calculatedTotal));
+      }
+
       const totalTax = personSplits.reduce((sum, split) => sum + split.tax_share, 0);
       const totalServiceCharge = personSplits.reduce((sum, split) => sum + split.service_charge_share, 0);
       const totalDiscount = personSplits.reduce((sum, split) => sum + split.discount_share, 0);
 
       setState({
         personSplits,
-        totalBill: roundToCents(totalBill),
+        totalBill: roundToCents(finalTotal), // Always equals grand_total
         totalTax: roundToCents(totalTax),
         totalServiceCharge: roundToCents(totalServiceCharge),
         totalDiscount: roundToCents(totalDiscount),
-        netTotal: roundToCents(totalBill),
+        netTotal: roundToCents(finalTotal), // Always equals grand_total
         calculationMethod: method,
         error: null,
       });

@@ -194,7 +194,7 @@ async def process_receipt(
         except HTTPException:
             raise
         except ValueError as e:
-            # Handle calculation validation errors specifically
+            # Handle calculation validation errors specifically with enhanced user feedback
             error_msg = str(e)
             logger.error(f"Receipt calculation validation failed: {error_msg}", extra={
                 "receipt_id": receipt_id,
@@ -202,9 +202,59 @@ async def process_receipt(
                 "operation": "openai_extraction",
                 "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
             })
+            
+            # Provide user-friendly error messages based on error type
+            user_friendly_msg = error_msg
+            if "Items total" in error_msg and "does not match" in error_msg:
+                if "provided subtotal" in error_msg:
+                    user_friendly_msg = (
+                        "The individual item prices don't add up to the subtotal shown on the receipt. "
+                        "This could be due to: 1) Discounts applied to individual items, 2) OCR reading errors, "
+                        "or 3) Rounding differences. Please verify the receipt and try again."
+                    )
+                elif "calculated subtotal" in error_msg:
+                    user_friendly_msg = (
+                        "The individual item prices don't match the expected subtotal (calculated from grand total minus taxes). "
+                        "This suggests: 1) Taxes may be inclusive in item prices, 2) There are additional charges not captured, "
+                        "or 3) The receipt format is non-standard. Please check the receipt structure."
+                    )
+            elif "Grand total validation failed" in error_msg:
+                user_friendly_msg = (
+                    "The grand total doesn't match the expected calculation (subtotal + taxes). "
+                    "This often happens when taxes are already included in the grand total. "
+                    "Please verify if this receipt uses tax-inclusive pricing."
+                )
+            elif "Items total" in error_msg and "matches neither scenario" in error_msg:
+                user_friendly_msg = (
+                    "The individual item prices don't match either expected calculation method. "
+                    "This could indicate: 1) Mixed tax-inclusive and tax-exclusive items, 2) Additional discounts or charges not captured, "
+                    "or 3) Calculation errors on the receipt. Please verify the receipt structure."
+                )
+            elif "Cannot calculate subtotal" in error_msg:
+                user_friendly_msg = (
+                    "Unable to determine the amount before tax because the grand total is less than the stated taxes/charges. "
+                    "This typically indicates tax-inclusive pricing where taxes are already included in the total. "
+                    "Please check the receipt format or contact support if this appears to be an error."
+                )
+            elif "Grand total is missing" in error_msg:
+                user_friendly_msg = (
+                    "The final amount payable (grand total) could not be found on the receipt. "
+                    "Please ensure the receipt clearly shows the total amount paid."
+                )
+            
             raise HTTPException(
                 status_code=422, 
-                detail=f"Receipt calculation validation failed: {error_msg}. Please check that the receipt totals are correct."
+                detail={
+                    "error": "Receipt Calculation Validation Failed",
+                    "message": user_friendly_msg,
+                    "technical_details": error_msg,
+                    "suggestions": [
+                        "Verify that the receipt image is clear and all text is visible",
+                        "Check if the receipt uses tax-inclusive or tax-exclusive pricing",
+                        "Ensure all items and charges are clearly printed on the receipt",
+                        "Try uploading a higher quality image if the current one is blurry"
+                    ]
+                }
             )
         except Exception as e:
             logger.error(f"Unexpected error during OpenAI extraction: {str(e)}", extra={
