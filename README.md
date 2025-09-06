@@ -1,3 +1,5 @@
+# This is fully vibe-coded and I do not take pride of it
+
 # Bill Splitter
 
 A modern web application for splitting bills with friends, family, or colleagues. Upload a receipt, assign items to people, and get instant calculations with tax and tip distribution.
@@ -57,30 +59,35 @@ bill-splitter/
 
 ### Prerequisites
 
-- Node.js 18+ and npm
-- Python 3.11+
-- Azure Document Intelligence account
-- OpenAI API account
+- **Windows Development Environment**
+- **Conda** (Miniconda or Anaconda)
+- **Node.js 18+** and npm
+- **Azure Document Intelligence** account
+- **OpenAI API** account
 
-### Backend Setup
+### Quick Start (Windows)
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
+1. **Setup Environment** (one-time setup):
+   ```cmd
+   set-up-windows.cmd
    ```
+   This script will:
+   - Create a conda environment with Python 3.11
+   - Install all Python dependencies
+   - Install all Node.js dependencies
+   - Verify all prerequisites
 
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+2. **Start Development Servers**:
+   ```cmd
+   start-windows.cmd
    ```
+   This script will:
+   - Start the backend server on `http://localhost:8000`
+   - Start the frontend server on `http://localhost:3000`
+   - Open both in separate terminal windows
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create a `.env` file with your API keys:
+3. **Configure API Keys**:
+   Create a `.env` file in the `backend` directory:
    ```env
    OCR_KEY=your_azure_ocr_key_here
    OCR_ENDPOINT=your_azure_ocr_endpoint_here
@@ -88,29 +95,46 @@ bill-splitter/
    SECRET_KEY=your_secret_key_here
    ```
 
-5. Run the backend server:
+4. **Access the Application**:
+   - Frontend: `http://localhost:3000`
+   - Backend API: `http://localhost:8000`
+   - API Documentation: `http://localhost:8000/docs`
+
+### Manual Setup (Alternative)
+
+If you prefer manual setup or are not using Windows, follow these steps:
+
+#### Backend Setup
+
+1. Create and activate a conda environment:
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   conda create -n bill-splitter python=3.11
+   conda activate bill-splitter
    ```
 
-### Frontend Setup
+2. Install Python dependencies:
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
 
-1. Navigate to the frontend directory:
+3. Run the backend:
+   ```bash
+   python run.py
+   ```
+
+#### Frontend Setup
+
+1. Install Node.js dependencies:
    ```bash
    cd frontend
-   ```
-
-2. Install dependencies:
-   ```bash
    npm install
    ```
 
-3. Start the development server:
+2. Start the development server:
    ```bash
    npm run dev
    ```
-
-4. Open your browser and navigate to `http://localhost:3000`
 
 ## Usage
 
