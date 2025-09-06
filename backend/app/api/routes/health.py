@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
-from ..dependencies import get_logger_dependency
-from ...core.logging import get_logger
+from app.api.dependencies import get_logger_dependency
+from app.core.logging import get_logger
 
 router = APIRouter(prefix="/health", tags=["health"])
 

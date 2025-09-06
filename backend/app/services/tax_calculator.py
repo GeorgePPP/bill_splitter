@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Tuple
-from ..models.person import Person
-from ..models.bill import BillItemAssignment
-from ..core.logging import get_logger
+from app.models.person import Person
+from app.models.bill import BillItemAssignment
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

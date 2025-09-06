@@ -3,13 +3,13 @@ from typing import List, Optional
 import uuid
 from datetime import datetime
 
-from ...models.bill import BillSplit, BillItemAssignment
-from ...models.person import Person
-from ...models.receipt import ReceiptData
-from ...schemas.bill_schema import BillSplitCreateSchema, BillSplitResponseSchema
-from ...services.split_calculator import split_calculator_service
-from ...utils.exceptions import BillNotFoundError, PersonNotFoundError
-from ..dependencies import get_current_user, get_logger_dependency
+from app.models.bill import BillSplit, BillItemAssignment
+from app.models.person import Person
+from app.models.receipt import ReceiptData
+from app.schemas.bill_schema import BillSplitCreateSchema, BillSplitResponseSchema
+from app.services.split_calculator import split_calculator_service
+from app.utils.exceptions import BillNotFoundError, PersonNotFoundError
+from app.api.dependencies import get_current_user, get_logger_dependency
 
 router = APIRouter(prefix="/bill", tags=["bill"])
 

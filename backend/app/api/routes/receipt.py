@@ -3,15 +3,21 @@ from typing import Optional
 import uuid
 from datetime import datetime
 
-from ...services.ocr_service import ocr_service
-from ...services.openai_service import openai_service
-from ...services.bill_parser import bill_parser_service
-from ...utils.file_handler import file_handler
-from ...utils.validators import validators
-from ...utils.exceptions import FileProcessingError, OCRProcessingError, DataExtractionError
-from ...schemas.receipt_schema import ReceiptUploadResponse, ReceiptProcessResponse
-from ...models.receipt import Receipt
-from ..dependencies import get_current_user, get_logger_dependency
+from app.services.ocr_service import ocr_service
+from app.services.openai_service import openai_service
+from app.services.bill_parser import bill_parser_service
+from app.utils.file_handler import file_handler
+from app.utils.validators import validators
+from app.utils.exceptions import FileProcessingError, OCRProcessingError, DataExtractionError
+from app.schemas.receipt_schema import (
+    ReceiptUploadResponse, 
+    ReceiptProcessResponse, 
+    ReceiptDataSchema,
+    StoreInfoSchema,
+    BillItemSchema
+)
+from app.models.receipt import Receipt
+from app.api.dependencies import get_current_user, get_logger_dependency
 
 router = APIRouter(prefix="/receipt", tags=["receipt"])
 
@@ -91,26 +97,24 @@ async def process_receipt(
         
         receipt = receipts_storage[receipt_id]
         
-        # Extract structured data using OpenAI
-        processed_data = openai_service.extract_receipt_data(receipt.raw_text)
-        if not processed_data:
+        # Extract structured data using OpenAI - get schema directly
+        processed_data_schema = openai_service.extract_receipt_data_as_schema(receipt.raw_text)
+        if not processed_data_schema:
             raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
         
-        # Validate extracted data
-        if not openai_service.validate_receipt_data(processed_data):
-            raise HTTPException(status_code=400, detail="Extracted data validation failed")
-        
-        # Update receipt with processed data
-        receipt.processed_data = processed_data
-        receipt.updated_at = datetime.now()
-        receipts_storage[receipt_id] = receipt
+        # Also get the model for storage (optional - you could store the schema instead)
+        processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
+        if processed_data_model:
+            receipt.processed_data = processed_data_model
+            receipt.updated_at = datetime.now()
+            receipts_storage[receipt_id] = receipt
         
         logger.info(f"Successfully processed receipt {receipt_id}")
         
         return ReceiptProcessResponse(
             success=True,
             message="Receipt processed successfully",
-            processed_data=processed_data
+            processed_data=processed_data_schema
         )
         
     except HTTPException:
@@ -118,7 +122,6 @@ async def process_receipt(
     except Exception as e:
         logger.error(f"Error processing receipt {receipt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @router.get("/{receipt_id}")
 async def get_receipt(

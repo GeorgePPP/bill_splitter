@@ -1,11 +1,11 @@
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 
 class PersonSplitSchema(BaseModel):
     person_id: str
     person_name: str
-    items: List[Dict[str, any]]
+    items: List[Dict[str, Any]]
     subtotal: float
     tax_share: float
     service_charge_share: float
@@ -22,4 +22,4 @@ class SplitCalculationRequestSchema(BaseModel):
 class SplitCalculationResponseSchema(BaseModel):
     success: bool
     message: str
-    calculation: Optional[Dict[str, any]] = None
+    calculation: Optional[Dict[str, Any]] = None

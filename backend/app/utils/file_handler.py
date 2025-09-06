@@ -2,8 +2,8 @@ import os
 import uuid
 from typing import Optional
 from fastapi import UploadFile
-from ..core.config import settings
-from ..core.logging import get_logger
+from app.core.config import settings
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

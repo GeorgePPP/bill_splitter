@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
-from ..models.receipt import ReceiptData, BillItem
-from ..core.logging import get_logger
+from app.models.receipt import ReceiptData, BillItem
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

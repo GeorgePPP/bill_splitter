@@ -1,11 +1,11 @@
-from typing import List, Dict
+from typing import List, Dict, Any
 from pydantic import BaseModel
 
 
 class PersonSplit(BaseModel):
     person_id: str
     person_name: str
-    items: List[Dict[str, any]]  # List of assigned items with details
+    items: List[Dict[str, Any]]  # List of assigned items with details
     subtotal: float
     tax_share: float
     service_charge_share: float

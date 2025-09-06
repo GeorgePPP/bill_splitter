@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 from decimal import Decimal, ROUND_HALF_UP
-from ..core.logging import get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

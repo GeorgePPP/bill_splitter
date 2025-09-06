@@ -3,13 +3,13 @@ from typing import List, Dict, Any
 import uuid
 from datetime import datetime
 
-from ...models.split import SplitCalculation, PersonSplit
-from ...models.person import Person
-from ...schemas.split_schema import SplitCalculationRequestSchema, SplitCalculationResponseSchema
-from ...services.split_calculator import split_calculator_service
-from ...services.tax_calculator import tax_calculator_service
-from ...utils.exceptions import BillNotFoundError, CalculationError
-from ..dependencies import get_current_user, get_logger_dependency
+from app.models.split import SplitCalculation, PersonSplit
+from app.models.person import Person
+from app.schemas.split_schema import SplitCalculationRequestSchema, SplitCalculationResponseSchema
+from app.services.split_calculator import split_calculator_service
+from app.services.tax_calculator import tax_calculator_service
+from app.utils.exceptions import BillNotFoundError, CalculationError
+from app.api.dependencies import get_current_user, get_logger_dependency
 
 router = APIRouter(prefix="/split", tags=["split"])
 
