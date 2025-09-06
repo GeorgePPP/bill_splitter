@@ -8,7 +8,13 @@ export interface BillItem {
   name: string;
   quantity: number;
   unit_price: number;
-  total: number;
+  total_price: number; // Changed from 'total' to 'total_price'
+}
+
+export interface TaxOrCharge {
+  name: string;
+  amount: number;
+  percent?: number;
 }
 
 export interface ReceiptData {
@@ -18,10 +24,8 @@ export interface ReceiptData {
   store: StoreInfo;
   items: BillItem[];
   subtotal: number;
-  tax: number;
-  service_charge: number;
-  discount: number;
-  total_amount: number;
+  taxes_or_charges: TaxOrCharge[]; // New field replacing individual tax/service_charge fields
+  grand_total: number; // Changed from 'total_amount' to 'grand_total'
   payment_method: string;
   transaction_id?: string;
   notes?: string;
@@ -31,7 +35,7 @@ export interface BillItemAssignment {
   item_name: string;
   quantity: number;
   unit_price: number;
-  total: number;
+  total_price: number; // Changed from 'total' to 'total_price'
   assigned_to?: string;
 }
 

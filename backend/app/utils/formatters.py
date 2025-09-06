@@ -98,8 +98,8 @@ class Formatters:
                     summary_parts.append(f"  ... and {len(receipt_data['items']) - 3} more items")
             
             # Totals
-            if "total_amount" in receipt_data:
-                summary_parts.append(f"Total: {self.format_currency(receipt_data['total_amount'])}")
+            if "grand_total" in receipt_data:
+                summary_parts.append(f"Total: {self.format_currency(receipt_data['grand_total'])}")
             
             return "\n".join(summary_parts)
             

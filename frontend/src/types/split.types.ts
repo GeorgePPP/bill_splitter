@@ -24,7 +24,7 @@ export interface BillItem {
   name: string;
   quantity: number;
   unit_price: number;
-  total: number;
+  total_price: number; // Changed from 'total' to 'total_price' for consistency
 }
 
 export interface SplitCalculationRequest {

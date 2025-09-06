@@ -152,7 +152,7 @@ export const useItemAssignment = () => {
   const getPersonTotal = useCallback((personId: string) => {
     return state.assignments
       .filter(assignment => assignment.assignedTo === personId)
-      .reduce((total, assignment) => total + assignment.item.total, 0);
+      .reduce((total, assignment) => total + assignment.item.total_price, 0);
   }, [state.assignments]);
 
   const getAllAssignedItems = useCallback(() => {

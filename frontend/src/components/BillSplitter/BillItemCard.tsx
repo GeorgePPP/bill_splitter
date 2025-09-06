@@ -50,7 +50,7 @@ export const BillItemCard: React.FC<BillItemCardProps> = ({
               <span>Qty: {item.quantity}</span>
               <span>@ {formatCurrency(item.unit_price)}</span>
               <span className="font-medium text-gray-900">
-                Total: {formatCurrency(item.total)}
+                Total: {formatCurrency(item.total_price)}
               </span>
             </div>
           </div>

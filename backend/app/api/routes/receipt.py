@@ -14,7 +14,8 @@ from app.schemas.receipt_schema import (
     ReceiptProcessResponse, 
     ReceiptDataSchema,
     StoreInfoSchema,
-    BillItemSchema
+    BillItemSchema,
+    TaxOrChargeSchema
 )
 from app.models.receipt import Receipt
 from app.api.dependencies import get_current_user, get_logger_dependency
@@ -186,12 +187,25 @@ async def process_receipt(
             logger.info("OpenAI schema extraction successful", extra={
                 "receipt_id": receipt_id,
                 "extracted_items_count": len(processed_data_schema.items),
-                "total_amount": processed_data_schema.total_amount,
+                "grand_total": processed_data_schema.grand_total,
                 "store_name": processed_data_schema.store.name
             })
             
         except HTTPException:
             raise
+        except ValueError as e:
+            # Handle calculation validation errors specifically
+            error_msg = str(e)
+            logger.error(f"Receipt calculation validation failed: {error_msg}", extra={
+                "receipt_id": receipt_id,
+                "error_type": "calculation_validation_error",
+                "operation": "openai_extraction",
+                "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
+            })
+            raise HTTPException(
+                status_code=422, 
+                detail=f"Receipt calculation validation failed: {error_msg}. Please check that the receipt totals are correct."
+            )
         except Exception as e:
             logger.error(f"Unexpected error during OpenAI extraction: {str(e)}", extra={
                 "receipt_id": receipt_id,

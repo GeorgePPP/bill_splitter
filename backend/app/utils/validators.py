@@ -128,7 +128,7 @@ class Validators:
             errors = []
             
             # Check required fields
-            required_fields = ["receipt_number", "date", "time", "store", "items", "total_amount"]
+            required_fields = ["receipt_number", "date", "time", "store", "items", "grand_total"]
             for field in required_fields:
                 if field not in receipt_data:
                     errors.append(f"Missing required field: {field}")
@@ -169,8 +169,8 @@ class Validators:
                             errors.append(f"Item {i+1} total must be a non-negative number")
             
             # Validate total amount
-            if "total_amount" in receipt_data:
-                total = receipt_data["total_amount"]
+            if "grand_total" in receipt_data:
+                total = receipt_data["grand_total"]
                 if not isinstance(total, (int, float)) or total < 0:
                     errors.append("Total amount must be a non-negative number")
             

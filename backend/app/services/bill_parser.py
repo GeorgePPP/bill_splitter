@@ -34,10 +34,15 @@ class BillParserService:
                 "items": [],
                 "totals": {
                     "subtotal": receipt_data.subtotal,
-                    "tax": receipt_data.tax,
-                    "service_charge": receipt_data.service_charge,
-                    "discount": receipt_data.discount,
-                    "total_amount": receipt_data.total_amount
+                    "taxes_or_charges": [
+                        {
+                            "name": tax_charge.name,
+                            "amount": tax_charge.amount,
+                            "percent": tax_charge.percent
+                        }
+                        for tax_charge in receipt_data.taxes_or_charges
+                    ],
+                    "grand_total": receipt_data.grand_total
                 },
                 "payment_info": {
                     "method": receipt_data.payment_method,
@@ -52,7 +57,7 @@ class BillParserService:
                     "name": item.name,
                     "quantity": item.quantity,
                     "unit_price": item.unit_price,
-                    "total": item.total,
+                    "total_price": item.total_price,
                     "assigned_to": None  # Will be set during assignment
                 }
                 parsed_data["items"].append(parsed_item)
@@ -90,8 +95,8 @@ class BillParserService:
                     
                 # Check if calculated total matches expected total
                 expected_total = item.quantity * item.unit_price
-                if abs(item.total - expected_total) > 0.01:  # Allow for small floating point differences
-                    logger.warning(f"Total mismatch for item {item.name}: expected {expected_total}, got {item.total}")
+                if abs(item.total_price - expected_total) > 0.01:  # Allow for small floating point differences
+                    logger.warning(f"Total mismatch for item {item.name}: expected {expected_total}, got {item.total_price}")
                     # Don't return False here as OCR might have slight inaccuracies
                     
             logger.info("Bill items validation completed")

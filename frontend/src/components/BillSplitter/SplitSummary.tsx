@@ -122,7 +122,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
                         {item.quantity}x {item.name}
                       </span>
                       <span className="font-medium">
-                        {formatCurrency(item.total)}
+                        {formatCurrency(item.total_price)}
                       </span>
                     </div>
                   ))}

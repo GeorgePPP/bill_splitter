@@ -13,7 +13,13 @@ class BillItem(BaseModel):
     name: str
     quantity: int
     unit_price: float
-    total: float
+    total_price: float  # Changed from 'total' to 'total_price' to match requirements
+
+
+class TaxOrCharge(BaseModel):
+    name: str
+    amount: float
+    percent: Optional[float] = None
 
 
 class ReceiptData(BaseModel):
@@ -23,10 +29,8 @@ class ReceiptData(BaseModel):
     store: StoreInfo
     items: List[BillItem]
     subtotal: float
-    tax: float
-    service_charge: float = 0.0
-    discount: float = 0.0
-    total_amount: float
+    taxes_or_charges: List[TaxOrCharge] = []  # New field to replace individual tax/service_charge
+    grand_total: float  # Changed from 'total_amount' to 'grand_total' to match requirements
     payment_method: str
     transaction_id: Optional[str] = None
     notes: Optional[str] = None

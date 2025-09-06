@@ -47,8 +47,8 @@ class OpenAIService:
                 "text_preview": raw_text[:300] + "..." if len(raw_text) > 300 else raw_text
             })
             
-            # Improved prompt for better JSON generation
-            system_prompt = """You are a receipt data extraction expert. Extract information from receipt text and return ONLY a valid JSON object with no additional text, markdown formatting, or explanations. The JSON must be properly formatted and parseable."""
+            # Improved prompt for better JSON generation according to new requirements
+            system_prompt = """You are a receipt data extraction expert. Extract information from receipt text and return ONLY a valid JSON object with no additional text, markdown formatting, or explanations. The JSON must be properly formatted and parseable. The grand_total field is MANDATORY and must be extracted from the receipt."""
             
             user_prompt = f"""Extract receipt data from this text and return as JSON with this exact structure:
 
@@ -66,18 +66,28 @@ class OpenAIService:
       "name": "Item name",
       "quantity": 1,
       "unit_price": 0.00,
-      "total": 0.00
+      "total_price": 0.00
     }}
   ],
   "subtotal": 0.00,
-  "tax": 0.00,
-  "service_charge": 0.00,
-  "discount": 0.00,
-  "total_amount": 0.00,
+  "taxes_or_charges": [
+    {{
+      "name": "Tax/charge name (e.g., GST, Service Charge, VAT)",
+      "amount": 0.00
+    }}
+  ],
+  "grand_total": 0.00,
   "payment_method": "Payment method (or 'Unknown')",
   "transaction_id": "Transaction ID (or null)",
   "notes": "Any additional notes (or null)"
 }}
+
+IMPORTANT RULES:
+1. The grand_total field is MANDATORY - it must be the final amount payable from the receipt
+2. Extract ALL taxes and charges into the taxes_or_charges array
+3. If subtotal is not explicitly shown, calculate it as: sum of all item total_price values
+4. Do NOT calculate percentages - only extract amounts as shown
+5. Ensure items have quantity, unit_price, and total_price fields
 
 Receipt text:
 {raw_text}
@@ -153,7 +163,7 @@ Return only the JSON object:"""
                 "json_keys": list(receipt_data_dict.keys()),
                 "items_count": len(receipt_data_dict.get("items", [])),
                 "store_info_present": "store" in receipt_data_dict and isinstance(receipt_data_dict["store"], dict),
-                "total_amount": receipt_data_dict.get("total_amount", 0),
+                "grand_total": receipt_data_dict.get("grand_total", 0),
                 "has_tax": receipt_data_dict.get("tax", 0) > 0,
                 "has_service_charge": receipt_data_dict.get("service_charge", 0) > 0,
                 "has_discount": receipt_data_dict.get("discount", 0) > 0
@@ -171,6 +181,16 @@ Return only the JSON object:"""
                     "operation_id": operation_id,
                     "error_type": "invalid_json_structure",
                     "received_keys": list(receipt_data_dict.keys())
+                })
+                return None
+            
+            # Post-process and validate calculations
+            try:
+                receipt_data_dict = self._post_process_and_validate(receipt_data_dict, operation_id)
+            except ValueError as e:
+                logger.error(f"[{operation_id}] Calculation validation failed: {str(e)}", extra={
+                    "operation_id": operation_id,
+                    "error_type": "calculation_validation_failed"
                 })
                 return None
             
@@ -202,7 +222,7 @@ Return only the JSON object:"""
                 "receipt_number": receipt_data.receipt_number,
                 "store_name": receipt_data.store.name,
                 "items_count": len(receipt_data.items),
-                "total_amount": receipt_data.total_amount
+                "grand_total": receipt_data.grand_total
             })
             
             return receipt_data
@@ -280,7 +300,7 @@ Return only the JSON object:"""
 
     def _validate_json_structure(self, data: Dict[str, Any]) -> bool:
         """
-        Validate that the JSON has required fields.
+        Validate that the JSON has required fields according to new structure.
         
         Args:
             data: Parsed JSON data
@@ -289,7 +309,7 @@ Return only the JSON object:"""
             True if structure is valid, False otherwise
         """
         try:
-            required_fields = ['receipt_number', 'date', 'time', 'store', 'items', 'total_amount']
+            required_fields = ['receipt_number', 'date', 'time', 'store', 'items', 'grand_total', 'subtotal']
             
             for field in required_fields:
                 if field not in data:
@@ -311,10 +331,23 @@ Return only the JSON object:"""
                 if not isinstance(item, dict):
                     logger.warning("Item is not a dictionary")
                     return False
-                item_required = ['name', 'quantity', 'unit_price', 'total']
+                item_required = ['name', 'quantity', 'unit_price', 'total_price']
                 for field in item_required:
                     if field not in item:
                         logger.warning(f"Item missing required field: {field}")
+                        return False
+            
+            # Validate taxes_or_charges structure if present
+            if 'taxes_or_charges' in data:
+                if not isinstance(data['taxes_or_charges'], list):
+                    logger.warning("taxes_or_charges is not a list")
+                    return False
+                for tax_charge in data['taxes_or_charges']:
+                    if not isinstance(tax_charge, dict):
+                        logger.warning("Tax/charge item is not a dictionary")
+                        return False
+                    if 'name' not in tax_charge or 'amount' not in tax_charge:
+                        logger.warning("Tax/charge missing required fields (name, amount)")
                         return False
             
             return True
@@ -339,7 +372,7 @@ Return only the JSON object:"""
                 logger.warning("No items found in receipt data")
                 return False
                 
-            if receipt_data.total_amount <= 0:
+            if receipt_data.grand_total <= 0:
                 logger.warning("Invalid total amount in receipt data")
                 return False
                 
@@ -357,7 +390,7 @@ Return only the JSON object:"""
             return False
 
 
-    def extract_receipt_data_as_schema(self, raw_text: str) -> Optional['ReceiptDataSchema']:
+    def extract_receipt_data_as_schema(self, raw_text: str) -> Optional[Dict[str, Any]]:
         """
         Extract structured receipt data and return as schema object.
         
@@ -374,7 +407,7 @@ Return only the JSON object:"""
                 return None
             
             # Import here to avoid circular imports
-            from app.schemas.receipt_schema import ReceiptDataSchema, StoreInfoSchema, BillItemSchema
+            from app.schemas.receipt_schema import ReceiptDataSchema, StoreInfoSchema, BillItemSchema, TaxOrChargeSchema
             
             # Convert to schema
             return ReceiptDataSchema(
@@ -391,15 +424,20 @@ Return only the JSON object:"""
                         name=item.name,
                         quantity=item.quantity,
                         unit_price=item.unit_price,
-                        total=item.total
+                        total_price=item.total_price
                     )
                     for item in receipt_data.items
                 ],
                 subtotal=receipt_data.subtotal,
-                tax=receipt_data.tax,
-                service_charge=receipt_data.service_charge,
-                discount=receipt_data.discount,
-                total_amount=receipt_data.total_amount,
+                taxes_or_charges=[
+                    TaxOrChargeSchema(
+                        name=tax_charge.name,
+                        amount=tax_charge.amount,
+                        percent=tax_charge.percent
+                    )
+                    for tax_charge in receipt_data.taxes_or_charges
+                ],
+                grand_total=receipt_data.grand_total,
                 payment_method=receipt_data.payment_method,
                 transaction_id=receipt_data.transaction_id,
                 notes=receipt_data.notes
@@ -427,7 +465,7 @@ Return only the JSON object:"""
                 name = item.get("name")
                 quantity = int(item.get("quantity", 1))
                 unit_price = float(item.get("unit_price", 0.0))
-                total = float(item.get("total", 0.0))
+                total = float(item.get("total_price", item.get("total", 0.0)))
 
                 if quantity <= 1:
                     # Ensure quantity is exactly 1
@@ -435,7 +473,7 @@ Return only the JSON object:"""
                         "name": name,
                         "quantity": 1,
                         "unit_price": unit_price,
-                        "total": total if quantity == 1 else (total if total > 0 else unit_price)
+                        "total_price": total if quantity == 1 else (total if total > 0 else unit_price)
                     })
                     continue
 
@@ -445,7 +483,7 @@ Return only the JSON object:"""
                 else:
                     per_unit_total = round(unit_price, 2)
 
-                # Set per-unit price equal to per-unit total to ensure total == quantity * unit_price validation
+                # Set per-unit price equal to per-unit total to ensure total_price == quantity * unit_price validation
                 per_unit_price = per_unit_total
 
                 # Add quantity-1 items with per-unit values
@@ -454,7 +492,7 @@ Return only the JSON object:"""
                         "name": name,
                         "quantity": 1,
                         "unit_price": per_unit_price,
-                        "total": per_unit_total
+                        "total_price": per_unit_total
                     })
 
                 # Last item gets the remainder to preserve the original total
@@ -468,7 +506,7 @@ Return only the JSON object:"""
                     "name": name,
                     "quantity": 1,
                     "unit_price": per_unit_price,
-                    "total": last_total
+                    "total_price": last_total
                 })
             except Exception:
                 # On any parsing error, fallback to a single quantity=1 item best-effort
@@ -476,10 +514,169 @@ Return only the JSON object:"""
                     "name": item.get("name"),
                     "quantity": 1,
                     "unit_price": item.get("unit_price", 0.0),
-                    "total": item.get("total", item.get("unit_price", 0.0))
+                    "total_price": item.get("total_price", item.get("total", item.get("unit_price", 0.0)))
                 })
 
         return expanded
+
+    def _post_process_and_validate(self, data: Dict[str, Any], operation_id: str) -> Dict[str, Any]:
+        """
+        Post-process extracted data and validate calculations.
+        Calculate tax percentages and ensure grand_total matches calculations.
+        
+        Args:
+            data: Extracted receipt data dictionary
+            operation_id: Operation ID for logging
+            
+        Returns:
+            Validated and corrected data dictionary
+            
+        Raises:
+            ValueError: If calculations cannot be reconciled with grand_total
+        """
+        logger.info(f"[{operation_id}] Starting post-processing and validation", extra={
+            "operation_id": operation_id,
+            "step": "post_process_start"
+        })
+        
+        # Extract values
+        items = data.get("items", [])
+        subtotal = float(data.get("subtotal", 0.0))
+        taxes_or_charges = data.get("taxes_or_charges", [])
+        grand_total = float(data.get("grand_total", 0.0))
+        
+        # Step 1: Calculate items total
+        calculated_items_total = sum(float(item.get("total_price", 0.0)) for item in items)
+        logger.info(f"[{operation_id}] Step 1 - Items calculation", extra={
+            "operation_id": operation_id,
+            "step": "items_calculation",
+            "items_count": len(items),
+            "calculated_items_total": calculated_items_total,
+            "provided_subtotal": subtotal,
+            "items_details": [{"name": item.get("name"), "quantity": item.get("quantity"), 
+                             "unit_price": item.get("unit_price"), "total_price": item.get("total_price")} 
+                            for item in items]
+        })
+        
+        # Step 2: Validate or adjust subtotal
+        subtotal_diff = abs(calculated_items_total - subtotal)
+        if subtotal_diff > 0.01:  # Allow 1 cent tolerance for rounding
+            logger.warning(f"[{operation_id}] Subtotal mismatch detected", extra={
+                "operation_id": operation_id,
+                "step": "subtotal_adjustment",
+                "calculated_items_total": calculated_items_total,
+                "provided_subtotal": subtotal,
+                "difference": subtotal_diff,
+                "action": "adjusting_subtotal_to_match_items"
+            })
+            subtotal = calculated_items_total
+            data["subtotal"] = subtotal
+        
+        # Step 3: Calculate tax percentages and validate amounts
+        for tax_charge in taxes_or_charges:
+            amount = float(tax_charge.get("amount", 0.0))
+            if subtotal > 0:
+                calculated_percent = round((amount / subtotal) * 100, 2)
+                tax_charge["percent"] = calculated_percent
+                logger.info(f"[{operation_id}] Step 3 - Tax/charge percentage calculation", extra={
+                    "operation_id": operation_id,
+                    "step": "tax_percentage_calculation",
+                    "tax_name": tax_charge.get("name"),
+                    "amount": amount,
+                    "subtotal": subtotal,
+                    "calculated_percent": calculated_percent
+                })
+            else:
+                tax_charge["percent"] = None
+                logger.warning(f"[{operation_id}] Cannot calculate percentage for zero subtotal", extra={
+                    "operation_id": operation_id,
+                    "tax_name": tax_charge.get("name"),
+                    "amount": amount
+                })
+        
+        # Step 4: Calculate total taxes and charges
+        total_taxes_charges = sum(float(tax_charge.get("amount", 0.0)) for tax_charge in taxes_or_charges)
+        logger.info(f"[{operation_id}] Step 4 - Total taxes and charges", extra={
+            "operation_id": operation_id,
+            "step": "taxes_charges_calculation",
+            "taxes_charges_count": len(taxes_or_charges),
+            "total_taxes_charges": total_taxes_charges,
+            "taxes_charges_details": [{"name": tc.get("name"), "amount": tc.get("amount"), 
+                                     "percent": tc.get("percent")} for tc in taxes_or_charges]
+        })
+        
+        # Step 5: Calculate expected grand total
+        calculated_grand_total = subtotal + total_taxes_charges
+        grand_total_diff = abs(calculated_grand_total - grand_total)
+        
+        logger.info(f"[{operation_id}] Step 5 - Grand total validation", extra={
+            "operation_id": operation_id,
+            "step": "grand_total_validation",
+            "subtotal": subtotal,
+            "total_taxes_charges": total_taxes_charges,
+            "calculated_grand_total": calculated_grand_total,
+            "provided_grand_total": grand_total,
+            "difference": grand_total_diff,
+            "calculation_formula": f"{subtotal} + {total_taxes_charges} = {calculated_grand_total}"
+        })
+        
+        # Step 6: Handle grand total mismatch
+        if grand_total_diff > 0.01:  # Allow 1 cent tolerance for rounding
+            logger.error(f"[{operation_id}] Grand total calculation mismatch", extra={
+                "operation_id": operation_id,
+                "step": "grand_total_mismatch",
+                "calculated_grand_total": calculated_grand_total,
+                "provided_grand_total": grand_total,
+                "difference": grand_total_diff,
+                "tolerance_exceeded": True
+            })
+            
+            # Try to adjust subtotal to match grand total (prioritize grand_total as ground truth)
+            adjusted_subtotal = grand_total - total_taxes_charges
+            if adjusted_subtotal >= 0:
+                logger.info(f"[{operation_id}] Adjusting subtotal to reconcile with grand_total", extra={
+                    "operation_id": operation_id,
+                    "step": "subtotal_reconciliation",
+                    "original_subtotal": subtotal,
+                    "adjusted_subtotal": adjusted_subtotal,
+                    "grand_total": grand_total,
+                    "total_taxes_charges": total_taxes_charges
+                })
+                data["subtotal"] = adjusted_subtotal
+                
+                # Recalculate tax percentages with new subtotal
+                if adjusted_subtotal > 0:
+                    for tax_charge in taxes_or_charges:
+                        amount = float(tax_charge.get("amount", 0.0))
+                        recalculated_percent = round((amount / adjusted_subtotal) * 100, 2)
+                        tax_charge["percent"] = recalculated_percent
+                        logger.info(f"[{operation_id}] Recalculated tax percentage", extra={
+                            "operation_id": operation_id,
+                            "tax_name": tax_charge.get("name"),
+                            "amount": amount,
+                            "adjusted_subtotal": adjusted_subtotal,
+                            "recalculated_percent": recalculated_percent
+                        })
+            else:
+                error_msg = f"Cannot reconcile calculations: grand_total ({grand_total}) is less than taxes_charges ({total_taxes_charges})"
+                logger.error(f"[{operation_id}] {error_msg}", extra={
+                    "operation_id": operation_id,
+                    "step": "reconciliation_failed",
+                    "grand_total": grand_total,
+                    "total_taxes_charges": total_taxes_charges,
+                    "would_be_negative_subtotal": adjusted_subtotal
+                })
+                raise ValueError(error_msg)
+        
+        logger.info(f"[{operation_id}] Post-processing completed successfully", extra={
+            "operation_id": operation_id,
+            "step": "post_process_complete",
+            "final_subtotal": data.get("subtotal"),
+            "final_grand_total": grand_total,
+            "taxes_charges_with_percentages": len([tc for tc in taxes_or_charges if tc.get("percent") is not None])
+        })
+        
+        return data
 
 # Global OpenAI service instance
 openai_service = OpenAIService()

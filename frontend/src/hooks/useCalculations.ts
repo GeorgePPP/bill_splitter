@@ -4,12 +4,6 @@ import { PersonSplit } from '@/types/split.types';
 import { ItemAssignment } from './useItemAssignment';
 import { 
   calculateSubtotal, 
-  calculateTax, 
-  calculateServiceCharge, 
-  calculateDiscount,
-  calculateTotal,
-  calculateProportionalShare,
-  calculateEqualShare,
   roundToCents,
   distributeAmount
 } from '@/utils/calculations';
@@ -42,10 +36,8 @@ export const useCalculations = () => {
     assignments: ItemAssignment[],
     receiptData: {
       subtotal: number;
-      tax: number;
-      service_charge: number;
-      discount: number;
-      total_amount: number;
+      taxes_or_charges: Array<{ name: string; amount: number; percent?: number }>;
+      grand_total: number; 
     },
     method: 'proportional' | 'equal' = 'proportional'
   ) => {
@@ -59,22 +51,29 @@ export const useCalculations = () => {
         return calculateSubtotal(assignedItems);
       });
 
-      const totalSubtotal = personSubtotals.reduce((sum, subtotal) => sum + subtotal, 0);
+      // Calculate total taxes and charges for validation (if needed later)
+      
+      // For backward compatibility, separate taxes from service charges based on name
+      const tax = receiptData.taxes_or_charges
+        .filter(tc => tc.name.toLowerCase().includes('tax') || tc.name.toLowerCase().includes('gst') || tc.name.toLowerCase().includes('vat'))
+        .reduce((sum, tc) => sum + tc.amount, 0);
+      
+      const serviceCharge = receiptData.taxes_or_charges
+        .filter(tc => tc.name.toLowerCase().includes('service') || tc.name.toLowerCase().includes('charge'))
+        .reduce((sum, tc) => sum + tc.amount, 0);
 
       // Calculate tax distribution
       const taxDistribution = method === 'proportional' 
-        ? distributeAmount(personSubtotals, receiptData.tax, 'proportional')
-        : distributeAmount(personSubtotals, receiptData.tax, 'equal');
+        ? distributeAmount(personSubtotals, tax, 'proportional')
+        : distributeAmount(personSubtotals, tax, 'equal');
 
       // Calculate service charge distribution
       const serviceChargeDistribution = method === 'proportional'
-        ? distributeAmount(personSubtotals, receiptData.service_charge, 'proportional')
-        : distributeAmount(personSubtotals, receiptData.service_charge, 'equal');
+        ? distributeAmount(personSubtotals, serviceCharge, 'proportional')
+        : distributeAmount(personSubtotals, serviceCharge, 'equal');
 
-      // Calculate discount distribution
-      const discountDistribution = method === 'proportional'
-        ? distributeAmount(personSubtotals, receiptData.discount, 'proportional')
-        : distributeAmount(personSubtotals, receiptData.discount, 'equal');
+      // For now, assume no discount (can be added later if needed)
+      const discountDistribution = participants.map(() => 0);
 
       // Create person splits
       const personSplits: PersonSplit[] = participants.map((person, index) => {
