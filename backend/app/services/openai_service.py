@@ -17,15 +17,56 @@ class OpenAIService:
             raise ValueError("OPENAI_API_KEY environment variable must be set")
         self.client = OpenAI(api_key=settings.openai_api_key)
 
-    def extract_receipt_data(self, raw_text: str) -> Optional[ReceiptData]:
+    def extract_receipt_data_raw(self, raw_text: str) -> Optional[ReceiptData]:
         """
-        Extract structured receipt data from raw OCR text using OpenAI.
+        Extract structured receipt data from raw OCR text using OpenAI WITHOUT any validation.
+        This method only does LLM extraction and parsing - no calculations or validation.
         
         Args:
             raw_text: Raw text extracted from OCR
             
         Returns:
-            Structured receipt data or None if extraction fails
+            Raw structured receipt data or None if extraction fails
+        """
+        operation_id = f"openai_extract_raw_{hash(raw_text) % 10000}"
+        
+        try:
+            logger.info(f"[{operation_id}] Starting RAW OpenAI extraction (no validation)", extra={
+                "operation_id": operation_id,
+                "text_length": len(raw_text)
+            })
+            
+            # Get raw JSON data from OpenAI
+            json_data = self._extract_json_from_openai(raw_text, operation_id)
+            if not json_data:
+                logger.error(f"[{operation_id}] Failed to extract JSON data from OpenAI")
+                return None
+            
+            # Convert directly to ReceiptData object WITHOUT validation
+            receipt_data = ReceiptData(**json_data)
+            
+            logger.info(f"[{operation_id}] RAW extraction successful", extra={
+                "operation_id": operation_id,
+                "store_name": receipt_data.store.name,
+                "items_count": len(receipt_data.items),
+                "grand_total": receipt_data.grand_total
+            })
+            
+            return receipt_data
+            
+        except Exception as e:
+            logger.error(f"[{operation_id}] Error in raw extraction: {str(e)}")
+            return None
+
+    def extract_receipt_data(self, raw_text: str) -> Optional[ReceiptData]:
+        """
+        Extract structured receipt data from raw OCR text using OpenAI WITH validation.
+        
+        Args:
+            raw_text: Raw text extracted from OCR
+            
+        Returns:
+            Validated structured receipt data or None if extraction fails
         """
         operation_id = f"openai_extract_{hash(raw_text) % 10000}"
         
@@ -522,6 +563,129 @@ Return only the JSON object:"""
                 })
 
         return expanded
+
+    def _extract_json_from_openai(self, raw_text: str, operation_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract JSON data from OpenAI without any validation or post-processing.
+        ONLY does LLM extraction and JSON parsing.
+        """
+        try:
+            # Improved prompt for better JSON generation according to new requirements
+            system_prompt = """You are a receipt data extraction expert. Extract information from receipt text and return ONLY a valid JSON object with no additional text, markdown formatting, or explanations. At any time, do not calculate anything, just extract"""
+            
+            user_prompt = f"""Extract receipt data from this text and return as JSON with this exact structure:
+
+{{
+  "receipt_number": "Unique identifier for the receipt (e.g., RCP-2023-001)",
+  "date": "Date of purchase (YYYY-MM-DD)",
+  "time": "Time of purchase (HH:MM)",
+  "store": {
+    "name": "Name of the store or restaurant",
+    "address": "Address of the store",
+    "phone": "Contact phone number of the store"
+  },
+  "items": [
+    {
+      "name": "Name of the purchased item (e.g., 'Burger', 'Milk')",
+      "quantity": "Number of units purchased",
+      "unit_price": "Price per unit" (this or total must be provided),
+      "total": "Total price for this item" (this or total must be provided),
+    }
+  ],
+  "subtotal": "Sum of all item totals before tax or discounts" (this is optional and do not need your calculation),
+  "taxes_or_charges": [
+    {{
+      "name": "Tax/charge name (e.g., GST, Service Charge, VAT)",
+      "amount": 0.00
+    }}
+  ],
+  "discount": "Any discount applied (if any)",
+  "grand_total": "Final total payable", (this must be the final amount payable from the receipt) 
+  "payment_method": "Mode of payment (e.g., Cash, Credit Card, Mobile Payment)",
+  "transaction_id": "Transaction or reference number from the payment system",
+  "notes": "Optional additional notes (e.g., 'Thank you for shopping!')",
+}}
+
+CRITICAL EXTRACTION RULES:
+1. The grand_total field is MANDATORY - it must be the FINAL amount payable/total amount/amount payable from the receipt
+2. Extract ALL taxes, charges, service charges, and fees into the taxes_or_charges array
+3. For subtotal extraction:
+   - If "Subtotal", "Amount before tax", "Net amount", or similar is explicitly shown, use that value
+   - If NOT explicitly shown, set subtotal to 0.00 (DO NOT calculate it yourself)
+   - Look for terms like: "Subtotal", "Sub Total", "Amount Before Tax", "Net Amount", "Before Tax", "Taxable Amount"
+4. Do NOT perform any calculations - only extract amounts exactly as shown on the receipt
+5. Ensure items have quantity, unit_price, and total_price fields
+6. The grand_total is the authoritative final amount - taxes may already be included in this amount
+
+Receipt text:
+{raw_text}
+
+Return only the JSON object:"""
+
+            # Log API call details
+            api_call_info = {
+                "model": "gpt-4o",
+                "temperature": 0.1,
+                "max_tokens": 2000,
+                "system_prompt_length": len(system_prompt),
+                "user_prompt_length": len(user_prompt)
+            }
+            
+            logger.info(f"[{operation_id}] Sending request to OpenAI", extra={
+                "operation_id": operation_id,
+                **api_call_info
+            })
+
+            completion = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Lower temperature for more consistent output
+                max_tokens=2000
+            )
+
+            response_text = completion.choices[0].message.content
+            
+            # Log API response details
+            response_stats = {
+                "response_length": len(response_text) if response_text else 0,
+                "tokens_used": {
+                    "prompt_tokens": completion.usage.prompt_tokens if completion.usage else 0,
+                    "completion_tokens": completion.usage.completion_tokens if completion.usage else 0,
+                    "total_tokens": completion.usage.total_tokens if completion.usage else 0
+                },
+                "model_used": completion.model,
+                "finish_reason": completion.choices[0].finish_reason
+            }
+            
+            logger.info(f"[{operation_id}] Received OpenAI response", extra={
+                "operation_id": operation_id,
+                **response_stats,
+                "response_preview": response_text[:300] + "..." if response_text and len(response_text) > 300 else response_text
+            })
+            
+            if not response_text:
+                logger.error(f"[{operation_id}] OpenAI returned empty response")
+                return None
+            
+            # Clean the response - remove markdown formatting if present
+            cleaned_response = self._clean_json_response(response_text)
+            
+            # Parse JSON
+            try:
+                json_data = json.loads(cleaned_response)
+                logger.info(f"[{operation_id}] Successfully parsed JSON response")
+                return json_data
+            except json.JSONDecodeError as e:
+                logger.error(f"[{operation_id}] JSON parsing failed: {str(e)}")
+                logger.error(f"[{operation_id}] Raw response: {cleaned_response}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"[{operation_id}] OpenAI API call failed: {str(e)}")
+            return None
 
     def _post_process_and_validate(self, data: Dict[str, Any], operation_id: str) -> Dict[str, Any]:
         """
