@@ -1,0 +1,210 @@
+import React, { useState } from 'react';
+import { Header } from '@/components/Layout/Header';
+import { Footer } from '@/components/Layout/Footer';
+import { Container } from '@/components/Layout/Container';
+import { PersonSelector } from '@/components/BillSplitter/PersonSelector';
+import { NameInput } from '@/components/BillSplitter/NameInput';
+import { ReceiptUploader } from '@/components/BillSplitter/ReceiptUploader';
+import { ItemAssignment } from '@/components/BillSplitter/ItemAssignment';
+import { SplitSummary } from '@/components/BillSplitter/SplitSummary';
+import { useBillSplitter } from '@/hooks/useBillSplitter';
+import { useReceiptOCR } from '@/hooks/useReceiptOCR';
+import { usePersonManager } from '@/hooks/usePersonManager';
+import { useItemAssignment } from '@/hooks/useItemAssignment';
+import { useCalculations } from '@/hooks/useCalculations';
+import { receiptService } from '@/services/receiptService';
+import { splitService } from '@/services/splitService';
+import { Person } from '@/types/person.types';
+import { ReceiptData } from '@/types/bill.types';
+
+const App: React.FC = () => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  
+  const billSplitter = useBillSplitter();
+  const receiptOCR = useReceiptOCR();
+  const personManager = usePersonManager();
+  const itemAssignment = useItemAssignment();
+  const calculations = useCalculations();
+
+  const handleReceiptUpload = async (file: File) => {
+    try {
+      billSplitter.actions.setLoading(true);
+      
+      // Upload receipt
+      const uploadResponse = await receiptOCR.actions.uploadReceipt(file);
+      
+      if (uploadResponse.receipt_id) {
+        // Process receipt
+        const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
+        
+        if (processResponse.processed_data) {
+          billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id);
+          itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+          billSplitter.actions.nextStep();
+        }
+      }
+    } catch (error) {
+      console.error('Error processing receipt:', error);
+      billSplitter.actions.setError('Failed to process receipt. Please try again.');
+    } finally {
+      billSplitter.actions.setLoading(false);
+    }
+  };
+
+  const handleReceiptProcessed = async () => {
+    // This is called when the user clicks "Process Receipt" button
+    // The actual processing happens in handleReceiptUpload
+  };
+
+  const handleCalculateSplit = async () => {
+    try {
+      billSplitter.actions.setLoading(true);
+      
+      // Calculate split using the calculations hook
+      const personSplits = calculations.actions.calculateSplit(
+        billSplitter.state.participants,
+        itemAssignment.state.assignments,
+        billSplitter.state.receiptData!,
+        'proportional'
+      );
+      
+      billSplitter.actions.setSplitResults(personSplits);
+      billSplitter.actions.nextStep();
+    } catch (error) {
+      console.error('Error calculating split:', error);
+      billSplitter.actions.setError('Failed to calculate split. Please try again.');
+    } finally {
+      billSplitter.actions.setLoading(false);
+    }
+  };
+
+  const handleStartOver = () => {
+    billSplitter.actions.reset();
+    receiptOCR.actions.reset();
+    personManager.actions.reset();
+    itemAssignment.actions.reset();
+    calculations.actions.reset();
+  };
+
+  const handleShare = () => {
+    // Implement sharing functionality
+    console.log('Share results');
+  };
+
+  const handleDownload = () => {
+    // Implement download functionality
+    console.log('Download results');
+  };
+
+  const renderStep = () => {
+    switch (billSplitter.state.currentStep) {
+      case 1:
+        return (
+          <PersonSelector
+            numberOfPeople={billSplitter.state.numberOfPeople}
+            onNumberOfPeopleChange={billSplitter.actions.setNumberOfPeople}
+            onNext={billSplitter.actions.nextStep}
+            disabled={billSplitter.state.isLoading}
+          />
+        );
+      
+      case 2:
+        return (
+          <NameInput
+            participants={billSplitter.state.participants}
+            onParticipantsChange={(participants) => {
+              // Update participants in the bill splitter state
+              participants.forEach((person, index) => {
+                if (billSplitter.state.participants[index]) {
+                  billSplitter.actions.updateParticipant(index, person);
+                } else {
+                  billSplitter.actions.addParticipant(person);
+                }
+              });
+            }}
+            onNext={billSplitter.actions.nextStep}
+            onBack={billSplitter.actions.prevStep}
+            disabled={billSplitter.state.isLoading}
+          />
+        );
+      
+      case 3:
+        return (
+          <ReceiptUploader
+            onReceiptUploaded={handleReceiptUpload}
+            onReceiptProcessed={handleReceiptProcessed}
+            isLoading={receiptOCR.state.isUploading || receiptOCR.state.isProcessing}
+            uploadProgress={receiptOCR.state.uploadProgress}
+            error={receiptOCR.state.error}
+            disabled={billSplitter.state.isLoading}
+          />
+        );
+      
+      case 4:
+        return (
+          <ItemAssignment
+            items={billSplitter.state.receiptData?.items || []}
+            participants={billSplitter.state.participants}
+            assignments={itemAssignment.state.assignments}
+            onAssignItem={itemAssignment.actions.assignItem}
+            onUnassignItem={itemAssignment.actions.unassignItem}
+            onNext={handleCalculateSplit}
+            onBack={billSplitter.actions.prevStep}
+            disabled={billSplitter.state.isLoading}
+          />
+        );
+      
+      case 5:
+        return (
+          <SplitSummary
+            personSplits={calculations.state.personSplits}
+            totalBill={calculations.state.totalBill}
+            totalTax={calculations.state.totalTax}
+            totalServiceCharge={calculations.state.totalServiceCharge}
+            totalDiscount={calculations.state.totalDiscount}
+            onStartOver={handleStartOver}
+            onShare={handleShare}
+            onDownload={handleDownload}
+            disabled={billSplitter.state.isLoading}
+          />
+        );
+      
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Header
+        onMenuToggle={() => setIsMenuOpen(!isMenuOpen)}
+        isMenuOpen={isMenuOpen}
+      />
+      
+      <main className="flex-1 py-8">
+        <Container>
+          {billSplitter.state.error && (
+            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center space-x-2">
+                <div className="text-red-500">⚠️</div>
+                <p className="text-red-700">{billSplitter.state.error}</p>
+                <button
+                  onClick={() => billSplitter.actions.setError(null)}
+                  className="ml-auto text-red-500 hover:text-red-700"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+          
+          {renderStep()}
+        </Container>
+      </main>
+      
+      <Footer />
+    </div>
+  );
+};
+
+export default App;
