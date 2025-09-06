@@ -71,6 +71,13 @@ export const useBillSplitter = () => {
     }));
   }, []);
 
+  const setParticipants = useCallback((participants: Person[]) => {
+    setState(prev => ({
+      ...prev,
+      participants,
+    }));
+  }, []);
+
   const setReceiptData = useCallback((receiptData: ReceiptData, receiptId: string) => {
     setState(prev => ({
       ...prev,
@@ -167,15 +174,13 @@ export const useBillSplitter = () => {
   const canProceedToNextStep = useCallback(() => {
     switch (state.currentStep) {
       case 1:
-        return state.numberOfPeople > 0;
-      case 2:
-        return state.participants.length === state.numberOfPeople && 
+        return state.participants.length > 0 &&
                state.participants.every(p => p.name.trim() !== '');
-      case 3:
+      case 2:
         return state.receiptData !== null;
-      case 4:
+      case 3:
         return state.itemAssignments.every(assignment => assignment.assignedTo !== null);
-      case 5:
+      case 4:
         return state.splitResults !== null;
       default:
         return false;
@@ -189,6 +194,7 @@ export const useBillSplitter = () => {
       addParticipant,
       updateParticipant,
       removeParticipant,
+      setParticipants,
       setReceiptData,
       assignItem,
       unassignItem,

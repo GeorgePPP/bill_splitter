@@ -2,11 +2,10 @@ import React, { useState } from 'react';
 import { Header } from '@/components/Layout/Header';
 import { Footer } from '@/components/Layout/Footer';
 import { Container } from '@/components/Layout/Container';
-import { PersonSelector } from '@/components/BillSplitter/PersonSelector';
-import { NameInput } from '@/components/BillSplitter/NameInput';
 import { ReceiptUploader } from '@/components/BillSplitter/ReceiptUploader';
 import { ItemAssignment } from '@/components/BillSplitter/ItemAssignment';
 import { SplitSummary } from '@/components/BillSplitter/SplitSummary';
+import { ParticipantManager } from '@/components/BillSplitter/ParticipantManager';
 import { useBillSplitter } from '@/hooks/useBillSplitter';
 import { useReceiptOCR } from '@/hooks/useReceiptOCR';
 import { usePersonManager } from '@/hooks/usePersonManager';
@@ -112,35 +111,15 @@ const App: React.FC = () => {
     switch (billSplitter.state.currentStep) {
       case 1:
         return (
-          <PersonSelector
-            numberOfPeople={billSplitter.state.numberOfPeople}
-            onNumberOfPeopleChange={billSplitter.actions.setNumberOfPeople}
+          <ParticipantManager
+            participants={billSplitter.state.participants}
+            onParticipantsChange={billSplitter.actions.setParticipants}
             onNext={billSplitter.actions.nextStep}
             disabled={billSplitter.state.isLoading}
           />
         );
       
       case 2:
-        return (
-          <NameInput
-            participants={billSplitter.state.participants}
-            onParticipantsChange={(participants) => {
-              // Update participants in the bill splitter state
-              participants.forEach((person, index) => {
-                if (billSplitter.state.participants[index]) {
-                  billSplitter.actions.updateParticipant(index, person);
-                } else {
-                  billSplitter.actions.addParticipant(person);
-                }
-              });
-            }}
-            onNext={billSplitter.actions.nextStep}
-            onBack={billSplitter.actions.prevStep}
-            disabled={billSplitter.state.isLoading}
-          />
-        );
-      
-      case 3:
         return (
           <ReceiptUploader
             onReceiptUploaded={handleReceiptUpload}
@@ -152,7 +131,7 @@ const App: React.FC = () => {
           />
         );
       
-      case 4:
+      case 3:
         return (
           <ItemAssignment
             items={billSplitter.state.receiptData?.items || []}
@@ -169,7 +148,7 @@ const App: React.FC = () => {
           />
         );
       
-      case 5:
+      case 4:
         return (
           <SplitSummary
             personSplits={calculations.state.personSplits}
