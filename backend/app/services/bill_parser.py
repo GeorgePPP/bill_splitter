@@ -69,42 +69,6 @@ class BillParserService:
             logger.error(f"Error parsing receipt data: {str(e)}")
             return {}
 
-    def validate_bill_items(self, items: List[BillItem]) -> bool:
-        """
-        Validate bill items for completeness and accuracy.
-        
-        Args:
-            items: List of bill items to validate
-            
-        Returns:
-            True if all items are valid, False otherwise
-        """
-        try:
-            for item in items:
-                if not item.name or item.name.strip() == "":
-                    logger.warning("Item with empty name found")
-                    return False
-                    
-                if item.quantity <= 0:
-                    logger.warning(f"Invalid quantity for item {item.name}: {item.quantity}")
-                    return False
-                    
-                if item.unit_price <= 0:
-                    logger.warning(f"Invalid unit price for item {item.name}: {item.unit_price}")
-                    return False
-                    
-                # Check if calculated total matches expected total
-                expected_total = item.quantity * item.unit_price
-                if abs(item.total_price - expected_total) > 0.01:  # Allow for small floating point differences
-                    logger.warning(f"Total mismatch for item {item.name}: expected {expected_total}, got {item.total_price}")
-                    # Don't return False here as OCR might have slight inaccuracies
-                    
-            logger.info("Bill items validation completed")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating bill items: {str(e)}")
-            return False
 
     def categorize_items(self, items: List[BillItem]) -> Dict[str, List[BillItem]]:
         """

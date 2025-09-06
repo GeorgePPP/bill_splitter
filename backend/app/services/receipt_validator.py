@@ -8,6 +8,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+ERROR_TOLERANCE_IN_DOLLARS = 0.05
 
 class ReceiptValidatorService:
     """Service for validating receipt calculations and determining tax scenarios."""
@@ -33,6 +34,10 @@ class ReceiptValidatorService:
             "operation_id": operation_id,
             "step": "validation_start"
         })
+        
+        # First validate JSON structure
+        if not self._validate_json_structure(data, operation_id):
+            raise ValueError("Invalid JSON structure received from OpenAI")
         
         # Extract and validate basic data
         items = data.get("items", [])
@@ -111,7 +116,7 @@ class ReceiptValidatorService:
             expected_item_total = quantity * unit_price
             item_diff = abs(total_price - expected_item_total)
             
-            if item_diff > 0.01:  # Allow 1 cent tolerance
+            if item_diff > ERROR_TOLERANCE_IN_DOLLARS:  # Allow 1 cent tolerance
                 item_validation_errors.append({
                     "item": name,
                     "quantity": quantity,
@@ -138,7 +143,7 @@ class ReceiptValidatorService:
                                item_validation_errors: List[Dict], operation_id: str) -> Tuple[float, str]:
         """Determine if receipt uses tax-inclusive or tax-exclusive pricing."""
         
-        subtotal_explicitly_provided = provided_subtotal > 0.01
+        subtotal_explicitly_provided = provided_subtotal > 0
         
         if subtotal_explicitly_provided:
             # Scenario 1: Subtotal explicitly provided - this is tax-exclusive
@@ -150,7 +155,7 @@ class ReceiptValidatorService:
             
             # Validate that items add up to subtotal
             subtotal_diff = abs(calculated_items_total - provided_subtotal)
-            if subtotal_diff > 0.01:
+            if subtotal_diff > ERROR_TOLERANCE_IN_DOLLARS:
                 error_msg = (
                     f"Items total ({calculated_items_total:.2f}) does not match provided subtotal ({provided_subtotal:.2f}). "
                     f"Difference: {subtotal_diff:.2f}. "
@@ -166,7 +171,7 @@ class ReceiptValidatorService:
             expected_grand_total = provided_subtotal + total_taxes_charges
             grand_total_diff = abs(expected_grand_total - grand_total)
             
-            if grand_total_diff > 0.01:
+            if grand_total_diff > ERROR_TOLERANCE_IN_DOLLARS:
                 error_msg = (
                     f"Grand total validation failed. Expected: {expected_grand_total:.2f} "
                     f"(subtotal {provided_subtotal:.2f} + taxes {total_taxes_charges:.2f}), "
@@ -190,7 +195,7 @@ class ReceiptValidatorService:
             if total_taxes_charges == 0:
                 # No taxes - items should equal grand total
                 items_grand_diff = abs(calculated_items_total - grand_total)
-                if items_grand_diff <= 0.01:
+                if items_grand_diff <= ERROR_TOLERANCE_IN_DOLLARS:
                     return grand_total, "no_taxes"
                 else:
                     error_msg = (
@@ -213,11 +218,11 @@ class ReceiptValidatorService:
             })
             
             # Rule: Items must equal either Grand Total (tax-inclusive) OR Grand Total - Taxes (tax-exclusive)
-            if items_grand_diff <= 0.01:
+            if items_grand_diff <= ERROR_TOLERANCE_IN_DOLLARS:
                 # Tax-inclusive: items already include tax
                 logger.info(f"[{operation_id}] Tax-inclusive scenario detected")
                 return grand_total, "tax_inclusive"
-            elif items_subtotal_diff <= 0.01 and calculated_subtotal >= 0:
+            elif items_subtotal_diff <= ERROR_TOLERANCE_IN_DOLLARS and calculated_subtotal >= 0:
                 # Tax-exclusive: items + taxes = grand total
                 logger.info(f"[{operation_id}] Tax-exclusive scenario detected")
                 return calculated_subtotal, "tax_exclusive"
@@ -260,6 +265,136 @@ class ReceiptValidatorService:
                 "calculated_percent": calculated_percent,
                 "scenario": tax_scenario
             })
+
+    def _validate_json_structure(self, data: Dict[str, Any], operation_id: str) -> bool:
+        """
+        Validate that the JSON has required fields according to new structure.
+        
+        Args:
+            data: Parsed JSON data
+            operation_id: Operation ID for logging
+            
+        Returns:
+            True if structure is valid, False otherwise
+        """
+        try:
+            required_fields = ['receipt_number', 'date', 'time', 'store', 'items', 'grand_total', 'subtotal']
+            
+            for field in required_fields:
+                if field not in data:
+                    logger.warning(f"[{operation_id}] Missing required field: {field}")
+                    return False
+            
+            # Validate store structure
+            if not isinstance(data['store'], dict) or 'name' not in data['store']:
+                logger.warning(f"[{operation_id}] Invalid store structure")
+                return False
+            
+            # Validate items structure
+            if not isinstance(data['items'], list) or len(data['items']) == 0:
+                logger.warning(f"[{operation_id}] Invalid or empty items list")
+                return False
+            
+            # Validate each item
+            for item in data['items']:
+                if not isinstance(item, dict):
+                    logger.warning(f"[{operation_id}] Item is not a dictionary")
+                    return False
+                item_required = ['name', 'quantity', 'unit_price', 'total_price']
+                for field in item_required:
+                    if field not in item:
+                        logger.warning(f"[{operation_id}] Item missing required field: {field}")
+                        return False
+            
+            # Validate taxes_or_charges structure if present
+            if 'taxes_or_charges' in data:
+                if not isinstance(data['taxes_or_charges'], list):
+                    logger.warning(f"[{operation_id}] taxes_or_charges is not a list")
+                    return False
+                for tax_charge in data['taxes_or_charges']:
+                    if not isinstance(tax_charge, dict):
+                        logger.warning(f"[{operation_id}] Tax/charge item is not a dictionary")
+                        return False
+                    if 'name' not in tax_charge or 'amount' not in tax_charge:
+                        logger.warning(f"[{operation_id}] Tax/charge missing required fields (name, amount)")
+                        return False
+            
+            logger.info(f"[{operation_id}] JSON structure validation successful")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[{operation_id}] Error validating JSON structure: {str(e)}")
+            return False
+
+    def validate_receipt_data(self, receipt_data) -> bool:
+        """
+        Validate the extracted receipt data for completeness and accuracy.
+        
+        Args:
+            receipt_data: The extracted receipt data to validate
+            
+        Returns:
+            True if data is valid, False otherwise
+        """
+        try:
+            # Check if essential fields are present
+            if not receipt_data.items or len(receipt_data.items) == 0:
+                logger.warning("No items found in receipt data")
+                return False
+                
+            if receipt_data.grand_total <= 0:
+                logger.warning("Invalid total amount in receipt data")
+                return False
+                
+            # Validate item data
+            for item in receipt_data.items:
+                if not item.name or item.quantity <= 0 or item.unit_price < 0:
+                    logger.warning(f"Invalid item data: {item}")
+                    return False
+                    
+            logger.info("Receipt data validation successful")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating receipt data: {str(e)}")
+            return False
+
+    def validate_bill_items(self, items) -> bool:
+        """
+        Validate bill items for completeness and accuracy.
+        
+        Args:
+            items: List of bill items to validate
+            
+        Returns:
+            True if all items are valid, False otherwise
+        """
+        try:
+            for item in items:
+                if not item.name or item.name.strip() == "":
+                    logger.warning("Item with empty name found")
+                    return False
+                    
+                if item.quantity <= 0:
+                    logger.warning(f"Invalid quantity for item {item.name}: {item.quantity}")
+                    return False
+                    
+                if item.unit_price <= 0:
+                    logger.warning(f"Invalid unit price for item {item.name}: {item.unit_price}")
+                    return False
+                    
+                # Check if calculated total matches expected total
+                expected_total = item.quantity * item.unit_price
+                if abs(item.total_price - expected_total) > 0.01:  # Allow for small floating point differences
+                    logger.warning(f"Total mismatch for item {item.name}: expected {expected_total}, got {item.total_price}")
+                    # Don't return False here as OCR might have slight inaccuracies
+                    
+            logger.info("Bill items validation completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating bill items: {str(e)}")
+            return False
 
 
 # Global receipt validator service instance

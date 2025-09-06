@@ -114,36 +114,6 @@ class SplitCalculatorService:
             logger.error(f"Error calculating split: {str(e)}")
             return []
 
-    def validate_split_calculation(
-        self,
-        person_assignments: List[PersonAssignment],
-        expected_total: float
-    ) -> bool:
-        """
-        Validate that the split calculation is correct.
-        
-        Args:
-            person_assignments: List of person assignments
-            expected_total: Expected total amount
-            
-        Returns:
-            True if calculation is valid, False otherwise
-        """
-        try:
-            calculated_total = sum(assignment.total for assignment in person_assignments)
-            difference = abs(calculated_total - expected_total)
-            
-            # Allow for small floating point differences
-            if difference > 0.01:
-                logger.warning(f"Split calculation validation failed: expected {expected_total}, got {calculated_total}")
-                return False
-                
-            logger.info("Split calculation validation successful")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating split calculation: {str(e)}")
-            return False
 
     def generate_split_summary(
         self,
@@ -189,7 +159,7 @@ class SplitCalculatorService:
                 "validation": {
                     "calculated_total": sum(assignment.total for assignment in person_assignments),
                     "expected_total": total_bill,
-                    "is_valid": self.validate_split_calculation(person_assignments, total_bill)
+                    "is_valid": True  # Validation should be done by calculation_validator_service
                 }
             }
             

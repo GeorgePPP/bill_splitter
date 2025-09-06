@@ -175,54 +175,6 @@ class TaxCalculatorService:
             logger.error(f"Error calculating discount distribution: {str(e)}")
             return {}
 
-    def validate_tax_calculations(
-        self,
-        tax_distribution: Dict[str, float],
-        service_charge_distribution: Dict[str, float],
-        discount_distribution: Dict[str, float],
-        expected_tax: float,
-        expected_service_charge: float,
-        expected_discount: float
-    ) -> bool:
-        """
-        Validate that all tax calculations are correct.
-        
-        Args:
-            tax_distribution: Tax distribution dictionary
-            service_charge_distribution: Service charge distribution dictionary
-            discount_distribution: Discount distribution dictionary
-            expected_tax: Expected total tax
-            expected_service_charge: Expected total service charge
-            expected_discount: Expected total discount
-            
-        Returns:
-            True if all calculations are valid, False otherwise
-        """
-        try:
-            # Validate tax distribution
-            calculated_tax = sum(tax_distribution.values())
-            if abs(calculated_tax - expected_tax) > 0.01:
-                logger.warning(f"Tax distribution validation failed: expected {expected_tax}, got {calculated_tax}")
-                return False
-            
-            # Validate service charge distribution
-            calculated_service_charge = sum(service_charge_distribution.values())
-            if abs(calculated_service_charge - expected_service_charge) > 0.01:
-                logger.warning(f"Service charge distribution validation failed: expected {expected_service_charge}, got {calculated_service_charge}")
-                return False
-            
-            # Validate discount distribution
-            calculated_discount = sum(discount_distribution.values())
-            if abs(calculated_discount - expected_discount) > 0.01:
-                logger.warning(f"Discount distribution validation failed: expected {expected_discount}, got {calculated_discount}")
-                return False
-            
-            logger.info("All tax calculations validation successful")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating tax calculations: {str(e)}")
-            return False
 
 
 # Global tax calculator service instance
