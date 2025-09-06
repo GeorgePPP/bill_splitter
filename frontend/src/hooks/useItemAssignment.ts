@@ -7,11 +7,24 @@ export interface ItemAssignment {
   assignedTo: string | null;
 }
 
+export interface DuplicateAssignmentInfo {
+  itemName: string;
+  personId: string;
+  personName: string;
+  existingCount: number;
+  newCount: number;
+}
+
 export interface ItemAssignmentState {
   assignments: ItemAssignment[];
   selectedItem: number | null;
   isAssigning: boolean;
   error: string | null;
+  pendingAssignment: {
+    itemIndex: number;
+    personId: string;
+    duplicateInfo: DuplicateAssignmentInfo | null;
+  } | null;
 }
 
 export const useItemAssignment = () => {
@@ -20,6 +33,7 @@ export const useItemAssignment = () => {
     selectedItem: null,
     isAssigning: false,
     error: null,
+    pendingAssignment: null,
   });
 
   const initializeAssignments = useCallback((items: BillItem[]) => {
@@ -33,7 +47,51 @@ export const useItemAssignment = () => {
     }));
   }, []);
 
-  const assignItem = useCallback((itemIndex: number, personId: string) => {
+  const checkForDuplicateAssignment = useCallback((itemIndex: number, personId: string, participants: Person[]) => {
+    const itemToAssign = state.assignments[itemIndex];
+    if (!itemToAssign) return null;
+
+    // Count how many times this item name is already assigned to this person
+    const existingCount = state.assignments.filter(assignment => 
+      assignment.assignedTo === personId && 
+      assignment.item.name.toLowerCase().trim() === itemToAssign.item.name.toLowerCase().trim()
+    ).length;
+
+    if (existingCount > 0) {
+      const person = participants.find(p => p.id === personId);
+      return {
+        itemName: itemToAssign.item.name,
+        personId,
+        personName: person?.name || 'Unknown',
+        existingCount,
+        newCount: existingCount + 1,
+      };
+    }
+
+    return null;
+  }, [state.assignments]);
+
+  const assignItem = useCallback((itemIndex: number, personId: string, participants?: Person[]) => {
+    // Check for duplicate assignment if participants are provided
+    if (participants) {
+      const duplicateInfo = checkForDuplicateAssignment(itemIndex, personId, participants);
+      
+      if (duplicateInfo) {
+        // Set pending assignment for confirmation
+        setState(prev => ({
+          ...prev,
+          pendingAssignment: {
+            itemIndex,
+            personId,
+            duplicateInfo,
+          },
+          error: null,
+        }));
+        return { requiresConfirmation: true, duplicateInfo };
+      }
+    }
+
+    // Proceed with assignment
     setState(prev => ({
       ...prev,
       assignments: prev.assignments.map((assignment, index) =>
@@ -42,8 +100,11 @@ export const useItemAssignment = () => {
           : assignment
       ),
       error: null,
+      pendingAssignment: null,
     }));
-  }, []);
+    
+    return { requiresConfirmation: false, duplicateInfo: null };
+  }, [checkForDuplicateAssignment]);
 
   const unassignItem = useCallback((itemIndex: number) => {
     setState(prev => ({
@@ -138,12 +199,40 @@ export const useItemAssignment = () => {
     }));
   }, []);
 
+  const confirmPendingAssignment = useCallback(() => {
+    setState(prev => {
+      if (!prev.pendingAssignment) return prev;
+
+      const { itemIndex, personId } = prev.pendingAssignment;
+      
+      return {
+        ...prev,
+        assignments: prev.assignments.map((assignment, index) =>
+          index === itemIndex
+            ? { ...assignment, assignedTo: personId }
+            : assignment
+        ),
+        pendingAssignment: null,
+        error: null,
+      };
+    });
+  }, []);
+
+  const cancelPendingAssignment = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      pendingAssignment: null,
+      error: null,
+    }));
+  }, []);
+
   const reset = useCallback(() => {
     setState({
       assignments: [],
       selectedItem: null,
       isAssigning: false,
       error: null,
+      pendingAssignment: null,
     });
   }, []);
 
@@ -190,6 +279,9 @@ export const useItemAssignment = () => {
       reset,
       bulkAssign,
       bulkUnassign,
+      checkForDuplicateAssignment,
+      confirmPendingAssignment,
+      cancelPendingAssignment,
     },
   };
 };

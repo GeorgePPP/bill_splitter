@@ -10,7 +10,7 @@ export interface BillItemCardProps {
   index: number;
   assignedTo?: string;
   participants: Array<{ id: string; name: string }>;
-  onAssign: (itemIndex: number, personId: string) => void;
+  onAssign: (itemIndex: number, personId: string) => { requiresConfirmation: boolean; duplicateInfo: any } | void;
   onUnassign: (itemIndex: number) => void;
   disabled?: boolean;
 }

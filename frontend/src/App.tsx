@@ -56,6 +56,18 @@ const App: React.FC = () => {
     // The actual processing happens in handleReceiptUpload
   };
 
+  const handleAssignItem = (itemIndex: number, personId: string) => {
+    return itemAssignment.actions.assignItem(itemIndex, personId, billSplitter.state.participants);
+  };
+
+  const handleConfirmAssignment = () => {
+    itemAssignment.actions.confirmPendingAssignment();
+  };
+
+  const handleCancelAssignment = () => {
+    itemAssignment.actions.cancelPendingAssignment();
+  };
+
   const handleCalculateSplit = async () => {
     try {
       billSplitter.actions.setLoading(true);
@@ -146,11 +158,14 @@ const App: React.FC = () => {
             items={billSplitter.state.receiptData?.items || []}
             participants={billSplitter.state.participants}
             assignments={itemAssignment.state.assignments}
-            onAssignItem={itemAssignment.actions.assignItem}
+            onAssignItem={handleAssignItem}
+            onConfirmAssignment={handleConfirmAssignment}
+            onCancelAssignment={handleCancelAssignment}
             onUnassignItem={itemAssignment.actions.unassignItem}
             onNext={handleCalculateSplit}
             onBack={billSplitter.actions.prevStep}
             disabled={billSplitter.state.isLoading}
+            pendingAssignment={itemAssignment.state.pendingAssignment}
           />
         );
       
