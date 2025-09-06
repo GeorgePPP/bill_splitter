@@ -35,21 +35,78 @@ async def upload_receipt(
     Upload a receipt image for OCR processing.
     """
     try:
-        # Validate file
+        # Validate file with detailed logging
+        logger.info(f"Validating uploaded file: {file.filename}, size: {file.size if hasattr(file, 'size') else 'unknown'}, content_type: {file.content_type}")
+        
         is_valid, error_message = file_handler.validate_file(file)
         if not is_valid:
+            logger.warning(f"File validation failed: {error_message}", extra={
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "validation_error": error_message
+            })
             raise HTTPException(status_code=400, detail=error_message)
         
-        # Save file
-        file_path = file_handler.save_file(file)
-        if not file_path:
+        logger.info("File validation successful")
+        
+        # Save file with error handling
+        try:
+            file_path = file_handler.save_file(file)
+            if not file_path:
+                logger.error("File save operation returned None", extra={
+                    "filename": file.filename,
+                    "operation": "file_save"
+                })
+                raise HTTPException(status_code=500, detail="Failed to save file")
+            
+            logger.info(f"File saved successfully to: {file_path}")
+            
+        except Exception as e:
+            logger.error(f"Error during file save operation: {str(e)}", extra={
+                "filename": file.filename,
+                "error_type": type(e).__name__,
+                "operation": "file_save"
+            })
             raise HTTPException(status_code=500, detail="Failed to save file")
         
-        # Extract text using OCR
-        raw_text = ocr_service.extract_text_from_image(file_path)
-        if not raw_text:
+        # Extract text using OCR with comprehensive error handling
+        try:
+            logger.info("Starting OCR text extraction")
+            raw_text = ocr_service.extract_text_from_image(file_path)
+            
+            if not raw_text:
+                logger.error("OCR extraction returned no text", extra={
+                    "file_path": file_path,
+                    "operation": "ocr_extraction"
+                })
+                
+                # Clean up saved file
+                try:
+                    file_handler.delete_file(file_path)
+                    logger.info("Cleaned up saved file after OCR failure")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up file after OCR failure: {str(cleanup_error)}")
+                
+                raise HTTPException(status_code=500, detail="Failed to extract text from image")
+            
+            logger.info(f"OCR extraction successful, extracted {len(raw_text)} characters")
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during OCR extraction: {str(e)}", extra={
+                "file_path": file_path,
+                "error_type": type(e).__name__,
+                "operation": "ocr_extraction"
+            })
+            
             # Clean up saved file
-            file_handler.delete_file(file_path)
+            try:
+                file_handler.delete_file(file_path)
+                logger.info("Cleaned up saved file after OCR error")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to clean up file after OCR error: {str(cleanup_error)}")
+            
             raise HTTPException(status_code=500, detail="Failed to extract text from image")
         
         # Create receipt record
@@ -91,23 +148,77 @@ async def process_receipt(
     Process uploaded receipt using OpenAI to extract structured data.
     """
     try:
-        # Get receipt from storage
+        # Get receipt from storage with logging
+        logger.info(f"Processing receipt: {receipt_id}")
+        
         if receipt_id not in receipts_storage:
+            logger.warning(f"Receipt not found in storage: {receipt_id}", extra={
+                "receipt_id": receipt_id,
+                "operation": "receipt_lookup"
+            })
             raise HTTPException(status_code=404, detail="Receipt not found")
         
         receipt = receipts_storage[receipt_id]
+        logger.info(f"Found receipt: {receipt.filename}, text length: {len(receipt.raw_text) if receipt.raw_text else 0}")
         
-        # Extract structured data using OpenAI - get schema directly
-        processed_data_schema = openai_service.extract_receipt_data_as_schema(receipt.raw_text)
-        if not processed_data_schema:
+        # Validate raw text before processing
+        if not receipt.raw_text or receipt.raw_text.strip() == "":
+            logger.error("Receipt has no raw text to process", extra={
+                "receipt_id": receipt_id,
+                "filename": receipt.filename,
+                "operation": "openai_processing"
+            })
+            raise HTTPException(status_code=400, detail="Receipt has no text data to process")
+        
+        # Extract structured data using OpenAI with comprehensive error handling
+        try:
+            logger.info("Starting OpenAI data extraction")
+            processed_data_schema = openai_service.extract_receipt_data_as_schema(receipt.raw_text)
+            
+            if not processed_data_schema:
+                logger.error("OpenAI extraction returned no structured data", extra={
+                    "receipt_id": receipt_id,
+                    "text_length": len(receipt.raw_text),
+                    "operation": "openai_extraction"
+                })
+                raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
+            
+            logger.info("OpenAI schema extraction successful", extra={
+                "receipt_id": receipt_id,
+                "extracted_items_count": len(processed_data_schema.items),
+                "total_amount": processed_data_schema.total_amount,
+                "store_name": processed_data_schema.store.name
+            })
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during OpenAI extraction: {str(e)}", extra={
+                "receipt_id": receipt_id,
+                "error_type": type(e).__name__,
+                "operation": "openai_extraction",
+                "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
+            })
             raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
         
-        # Also get the model for storage (optional - you could store the schema instead)
-        processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
-        if processed_data_model:
-            receipt.processed_data = processed_data_model
-            receipt.updated_at = datetime.now()
-            receipts_storage[receipt_id] = receipt
+        # Also get the model for storage with error handling
+        try:
+            processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
+            if processed_data_model:
+                receipt.processed_data = processed_data_model
+                receipt.updated_at = datetime.now()
+                receipts_storage[receipt_id] = receipt
+                logger.info("Receipt data model stored successfully")
+            else:
+                logger.warning("OpenAI model extraction returned None, schema will be used for response")
+                
+        except Exception as e:
+            logger.warning(f"Failed to extract/store receipt data model: {str(e)}", extra={
+                "receipt_id": receipt_id,
+                "error_type": type(e).__name__,
+                "operation": "model_storage"
+            })
+            # Continue anyway since we have the schema for response
         
         logger.info(f"Successfully processed receipt {receipt_id}")
         
