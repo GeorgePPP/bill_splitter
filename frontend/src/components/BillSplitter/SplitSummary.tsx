@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/UI/Button';
 import { PersonSplit } from '@/types/split.types';
 import { formatCurrency } from '@/utils/formatters';
-import { Receipt, User, Calculator, Download, Share2 } from 'lucide-react';
+import { Receipt, User, Calculator, Download, Share2, Users } from 'lucide-react';
 
 export interface SplitSummaryProps {
   personSplits: PersonSplit[];
@@ -116,10 +116,18 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
               <div className="space-y-2">
                 <h5 className="text-sm font-medium text-gray-700">Items:</h5>
                 <div className="space-y-1">
-                  {split.items.map((item, itemIndex) => (
+                  {split.items.map((item: any, itemIndex) => (
                     <div key={itemIndex} className="flex justify-between text-sm">
-                      <span className="text-gray-600">
+                      <span className="text-gray-600 flex items-center">
                         {item.quantity}x {item.name}
+                        {item.isSplit && (
+                          <span className="ml-2 inline-flex items-center">
+                            <Users className="h-3 w-3 text-blue-500 mr-1" />
+                            <span className="text-xs text-blue-600">
+                              ({item.splitPercentage?.toFixed(1)}%)
+                            </span>
+                          </span>
+                        )}
                       </span>
                       <span className="font-medium">
                         {formatCurrency(item.total_price)}

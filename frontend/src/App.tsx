@@ -9,7 +9,7 @@ import { ParticipantManager } from '@/components/BillSplitter/ParticipantManager
 import { useBillSplitter } from '@/hooks/useBillSplitter';
 import { useReceiptOCR } from '@/hooks/useReceiptOCR';
 import { usePersonManager } from '@/hooks/usePersonManager';
-import { useItemAssignment } from '@/hooks/useItemAssignment';
+import { useItemAssignment, ItemSplit } from '@/hooks/useItemAssignment';
 import { useCalculations } from '@/hooks/useCalculations';
 import { receiptService } from '@/services/receiptService';
 import { splitService } from '@/services/splitService';
@@ -59,12 +59,24 @@ const App: React.FC = () => {
     return itemAssignment.actions.assignItem(itemIndex, personId, billSplitter.state.participants);
   };
 
+  const handleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => {
+    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, splitType, customSplits);
+  };
+
   const handleConfirmAssignment = () => {
     itemAssignment.actions.confirmPendingAssignment();
   };
 
   const handleCancelAssignment = () => {
     itemAssignment.actions.cancelPendingAssignment();
+  };
+
+  const handleRemovePersonFromSplit = (itemIndex: number, personId: string) => {
+    itemAssignment.actions.removePersonFromSplit(itemIndex, personId);
+  };
+
+  const handleCloseSplitModal = () => {
+    itemAssignment.actions.closeSplitModal();
   };
 
   const handleCalculateSplit = async () => {
@@ -138,13 +150,17 @@ const App: React.FC = () => {
             participants={billSplitter.state.participants}
             assignments={itemAssignment.state.assignments}
             onAssignItem={handleAssignItem}
+            onAssignItemToMultiplePeople={handleAssignItemToMultiplePeople}
             onConfirmAssignment={handleConfirmAssignment}
             onCancelAssignment={handleCancelAssignment}
             onUnassignItem={itemAssignment.actions.unassignItem}
+            onRemovePersonFromSplit={handleRemovePersonFromSplit}
+            onCloseSplitModal={handleCloseSplitModal}
             onNext={handleCalculateSplit}
             onBack={billSplitter.actions.prevStep}
             disabled={billSplitter.state.isLoading}
             pendingAssignment={itemAssignment.state.pendingAssignment}
+            pendingSplitModal={itemAssignment.state.pendingSplitModal}
           />
         );
       

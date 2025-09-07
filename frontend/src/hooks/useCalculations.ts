@@ -45,13 +45,24 @@ export const useCalculations = () => {
       // CRITICAL: The grand_total is the final amount payable - no additional calculations needed
       const finalTotal = receiptData.grand_total;
       
-      // Calculate each person's subtotal from assigned items
+      // Calculate each person's subtotal from assigned items (including split items)
       const personSubtotals = participants.map(person => {
-        const assignedItems = assignments
-          .filter(assignment => assignment.assignedTo === person.id)
-          .map(assignment => assignment.item);
+        let subtotal = 0;
         
-        return calculateSubtotal(assignedItems);
+        assignments.forEach(assignment => {
+          if (assignment.assignedTo === person.id) {
+            // Single assignment - person gets full item
+            subtotal += assignment.item.total_price;
+          } else if (assignment.isMultipleAssignment) {
+            // Multiple assignment - person gets their split amount
+            const split = assignment.splits.find(s => s.personId === person.id);
+            if (split) {
+              subtotal += split.amount;
+            }
+          }
+        });
+        
+        return roundToCents(subtotal);
       });
 
       const totalItemsSubtotal = personSubtotals.reduce((sum, subtotal) => sum + subtotal, 0);
@@ -71,9 +82,34 @@ export const useCalculations = () => {
       
       // Calculate person splits based on their proportion of the FINAL TOTAL
       const personSplits: PersonSplit[] = participants.map((person, index) => {
-        const assignedItems = assignments
-          .filter(assignment => assignment.assignedTo === person.id)
-          .map(assignment => assignment.item);
+        const assignedItems: Array<any> = [];
+        
+        // Collect assigned items for this person
+        assignments.forEach(assignment => {
+          if (assignment.assignedTo === person.id) {
+            // Single assignment
+            assignedItems.push({
+              name: assignment.item.name,
+              quantity: assignment.item.quantity,
+              unit_price: assignment.item.unit_price,
+              total_price: assignment.item.total_price,
+            });
+          } else if (assignment.isMultipleAssignment) {
+            // Multiple assignment - show as split item
+            const split = assignment.splits.find(s => s.personId === person.id);
+            if (split) {
+              assignedItems.push({
+                name: assignment.item.name,
+                quantity: assignment.item.quantity,
+                unit_price: assignment.item.unit_price,
+                total_price: split.amount, // Use the split amount instead of full item price
+                isSplit: true,
+                splitAmount: split.amount,
+                splitPercentage: split.percentage,
+              });
+            }
+          }
+        });
 
         const itemsSubtotal = personSubtotals[index];
         const proportion = totalItemsSubtotal > 0 ? itemsSubtotal / totalItemsSubtotal : 0;
