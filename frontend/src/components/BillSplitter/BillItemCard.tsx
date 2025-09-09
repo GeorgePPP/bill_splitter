@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { BillItem } from '@/types/bill.types';
 import { ItemAssignment } from '@/hooks/useItemAssignment';
 import { formatCurrency } from '@/utils/formatters';
-import { ShoppingCart, Package, Users, X } from 'lucide-react';
+import { ShoppingCart, Package, Users, X, Plus, Check } from 'lucide-react';
 
 export interface BillItemCardProps {
   item: BillItem;
@@ -14,6 +14,7 @@ export interface BillItemCardProps {
   onAssign: (itemIndex: number, personId: string) => { requiresConfirmation: boolean; duplicateInfo: any; requiresSplitChoice?: boolean } | void;
   onUnassign: (itemIndex: number) => void;
   onRemovePersonFromSplit: (itemIndex: number, personId: string) => void;
+  onMultipleAssign: (itemIndex: number, personIds: string[]) => void;
   disabled?: boolean;
 }
 
@@ -25,18 +26,58 @@ export const BillItemCard: React.FC<BillItemCardProps> = ({
   onAssign,
   onUnassign,
   onRemovePersonFromSplit,
+  onMultipleAssign,
   disabled = false,
 }) => {
+  const [selectedPeople, setSelectedPeople] = useState<string[]>([]);
+  const [isSelecting, setIsSelecting] = useState(false);
+
   const handleAssign = (personId: string) => {
-    onAssign(index, personId);
+    if (isSelecting) {
+      // Toggle person selection
+      setSelectedPeople(prev => 
+        prev.includes(personId) 
+          ? prev.filter(id => id !== personId)
+          : [...prev, personId]
+      );
+    } else {
+      // Single assignment (existing behavior)
+      onAssign(index, personId);
+    }
   };
 
   const handleUnassign = () => {
     onUnassign(index);
+    setSelectedPeople([]);
+    setIsSelecting(false);
   };
 
   const handleRemoveFromSplit = (personId: string) => {
     onRemovePersonFromSplit(index, personId);
+  };
+
+  const handleStartMultipleSelection = () => {
+    const existingPersonIds = assignment.isMultipleAssignment 
+      ? assignment.splits.map(s => s.personId)
+      : assignment.assignedTo 
+        ? [assignment.assignedTo]
+        : [];
+    
+    setSelectedPeople(existingPersonIds);
+    setIsSelecting(true);
+  };
+
+  const handleConfirmMultipleSelection = () => {
+    if (selectedPeople.length > 0) {
+      onMultipleAssign(index, selectedPeople);
+    }
+    setSelectedPeople([]);
+    setIsSelecting(false);
+  };
+
+  const handleCancelSelection = () => {
+    setSelectedPeople([]);
+    setIsSelecting(false);
   };
 
   const getPersonName = (personId: string) => {
@@ -65,6 +106,11 @@ export const BillItemCard: React.FC<BillItemCardProps> = ({
               {assignment.isMultipleAssignment && (
                 <Users className="h-4 w-4 text-blue-500" title="Split among multiple people" />
               )}
+              {isSelecting && (
+                <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
+                  Selecting ({selectedPeople.length})
+                </div>
+              )}
             </div>
             
             <div className="flex items-center space-x-4 text-sm text-gray-500">
@@ -77,7 +123,44 @@ export const BillItemCard: React.FC<BillItemCardProps> = ({
           </div>
 
           <div className="flex-shrink-0 ml-4">
-            {isAssigned ? (
+            {isSelecting ? (
+              <div className="space-y-2">
+                <div className="text-xs text-gray-500 mb-1">Select people:</div>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {participants.map((person) => (
+                    <Button
+                      key={person.id}
+                      variant={selectedPeople.includes(person.id) ? "primary" : "outline"}
+                      size="sm"
+                      onClick={() => handleAssign(person.id)}
+                      disabled={disabled}
+                      className="text-xs px-2 py-1"
+                    >
+                      {selectedPeople.includes(person.id) && <Check className="h-3 w-3 mr-1" />}
+                      {person.name}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex space-x-1">
+                  <Button
+                    size="sm"
+                    onClick={handleConfirmMultipleSelection}
+                    disabled={selectedPeople.length === 0}
+                    className="text-xs"
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelSelection}
+                    className="text-xs"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : isAssigned ? (
               <div className="space-y-2">
                 {/* Single assignment */}
                 {assignment.assignedTo && (
@@ -128,43 +211,48 @@ export const BillItemCard: React.FC<BillItemCardProps> = ({
                   </div>
                 )}
 
-                {/* Add more people button for existing assignments */}
-                {unassignedParticipants.length > 0 && (
-                  <div className="border-t border-gray-200 pt-2 mt-2">
-                    <div className="text-xs text-gray-500 mb-1">Add more people:</div>
-                    <div className="flex flex-wrap gap-1">
-                      {unassignedParticipants.map((person) => (
-                        <Button
-                          key={person.id}
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleAssign(person.id)}
-                          disabled={disabled}
-                          className="text-xs px-2 py-1"
-                        >
-                          + {person.name}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Edit assignment button */}
+                <div className="border-t border-gray-200 pt-2 mt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleStartMultipleSelection}
+                    disabled={disabled}
+                    className="text-xs"
+                    leftIcon={<Users className="h-3 w-3" />}
+                  >
+                    Add person to split
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="text-right">
                 <p className="text-sm text-gray-500 mb-2">Assign to:</p>
-                <div className="flex flex-wrap gap-1">
-                  {participants.map((person) => (
-                    <Button
-                      key={person.id}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAssign(person.id)}
-                      disabled={disabled}
-                      className="text-xs"
-                    >
-                      {person.name}
-                    </Button>
-                  ))}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {participants.map((person) => (
+                      <Button
+                        key={person.id}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAssign(person.id)}
+                        disabled={disabled}
+                        className="text-xs"
+                      >
+                        {person.name}
+                      </Button>
+                    ))}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleStartMultipleSelection}
+                    disabled={disabled}
+                    className="text-xs"
+                    leftIcon={<Plus className="h-3 w-3" />}
+                  >
+                    Multiple People
+                  </Button>
                 </div>
               </div>
             )}

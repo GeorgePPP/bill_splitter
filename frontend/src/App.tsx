@@ -50,6 +50,11 @@ const App: React.FC = () => {
     }
   };
 
+  const handleMultipleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[]) => {
+    // This will trigger the split choice modal
+    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, 'equal');
+  };
+
   const handleReceiptProcessed = async () => {
     // This is called when the user clicks "Process Receipt" button
     // The actual processing happens in handleReceiptUpload
@@ -143,26 +148,26 @@ const App: React.FC = () => {
           />
         );
       
-      case 3:
-        return (
-          <ItemAssignment
-            items={billSplitter.state.receiptData?.items || []}
-            participants={billSplitter.state.participants}
-            assignments={itemAssignment.state.assignments}
-            onAssignItem={handleAssignItem}
-            onAssignItemToMultiplePeople={handleAssignItemToMultiplePeople}
-            onConfirmAssignment={handleConfirmAssignment}
-            onCancelAssignment={handleCancelAssignment}
-            onUnassignItem={itemAssignment.actions.unassignItem}
-            onRemovePersonFromSplit={handleRemovePersonFromSplit}
-            onCloseSplitModal={handleCloseSplitModal}
-            onNext={handleCalculateSplit}
-            onBack={billSplitter.actions.prevStep}
-            disabled={billSplitter.state.isLoading}
-            pendingAssignment={itemAssignment.state.pendingAssignment}
-            pendingSplitModal={itemAssignment.state.pendingSplitModal}
-          />
-        );
+        case 3:
+          return (
+            <ItemAssignment
+              items={billSplitter.state.receiptData?.items || []}
+              participants={billSplitter.state.participants}
+              assignments={itemAssignment.state.assignments}
+              onAssignItem={handleAssignItem}
+              onAssignItemToMultiplePeople={handleAssignItemToMultiplePeople}
+              onConfirmAssignment={handleConfirmAssignment}
+              onCancelAssignment={handleCancelAssignment}
+              onUnassignItem={itemAssignment.actions.unassignItem}
+              onRemovePersonFromSplit={handleRemovePersonFromSplit}
+              onCloseSplitModal={handleCloseSplitModal}
+              onNext={handleCalculateSplit}
+              onBack={billSplitter.actions.prevStep}
+              disabled={billSplitter.state.isLoading}
+              pendingAssignment={itemAssignment.state.pendingAssignment}
+              pendingSplitModal={itemAssignment.state.pendingSplitModal}
+            />
+          );
       
       case 4:
         return (

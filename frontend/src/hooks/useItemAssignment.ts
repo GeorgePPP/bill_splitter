@@ -124,25 +124,6 @@ export const useItemAssignment = () => {
       }
     }
 
-    // If item is already assigned to someone, ask for split assignment
-    if (assignment.assignedTo || assignment.isMultipleAssignment) {
-      const existingPersonIds = assignment.isMultipleAssignment 
-        ? assignment.splits.map(s => s.personId)
-        : [assignment.assignedTo!];
-      
-      if (!existingPersonIds.includes(personId)) {
-        setState(prev => ({
-          ...prev,
-          pendingSplitModal: {
-            itemIndex,
-            personIds: [...existingPersonIds, personId],
-          },
-          error: null,
-        }));
-        return { requiresConfirmation: false, duplicateInfo: null, requiresSplitChoice: true };
-      }
-    }
-
     // Proceed with single assignment
     setState(prev => ({
       ...prev,
@@ -166,6 +147,39 @@ export const useItemAssignment = () => {
   const assignItemToMultiplePeople = useCallback((itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => {
     const assignment = state.assignments[itemIndex];
     if (!assignment) return;
+
+    // If only one person is selected, do a single assignment
+    if (personIds.length === 1) {
+      setState(prev => ({
+        ...prev,
+        assignments: prev.assignments.map((assignment, index) =>
+          index === itemIndex
+            ? { 
+                ...assignment, 
+                assignedTo: personIds[0],
+                splits: [],
+                isMultipleAssignment: false,
+              }
+            : assignment
+        ),
+        pendingSplitModal: null,
+        error: null,
+      }));
+      return;
+    }
+
+    // If we don't have custom splits and splitType is 'equal', open the modal for user to choose
+    if (!customSplits) {
+      setState(prev => ({
+        ...prev,
+        pendingSplitModal: {
+          itemIndex,
+          personIds,
+        },
+        error: null,
+      }));
+      return;
+    }
 
     let splits: ItemSplit[];
 

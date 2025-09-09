@@ -63,6 +63,11 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
   const totalCount = assignments.length;
   const allAssigned = assignedCount === totalCount;
 
+  const handleMultipleAssign = (itemIndex: number, personIds: string[]) => {
+    // Open the split choice modal directly
+    onAssignItemToMultiplePeople(itemIndex, personIds, 'equal'); // This will trigger the split modal
+  };
+
   // Generate confirmation modal content
   const getModalContent = () => {
     if (!pendingAssignment?.duplicateInfo) return { title: '', message: '', details: [] };
@@ -119,7 +124,7 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
           </div>
           <CardTitle>Assign Items to People</CardTitle>
           <CardDescription>
-            Click on a person's name to assign each item. You can assign items to multiple people if needed.
+            Click on a person's name to assign each item. Click additional people to split an item.
           </CardDescription>
           
           <div className="flex items-center justify-center space-x-4 mt-4">
@@ -148,6 +153,7 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
                 onAssign={onAssignItem}
                 onUnassign={onUnassignItem}
                 onRemovePersonFromSplit={onRemovePersonFromSplit}
+                onMultipleAssign={handleMultipleAssign}
                 disabled={disabled}
               />
             ))}
