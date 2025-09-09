@@ -171,12 +171,14 @@ async def process_receipt(
             })
             raise HTTPException(status_code=400, detail="Receipt has no text data to process")
         
-        # Extract structured data using OpenAI with comprehensive error handling
+        # Single extraction call - get both model and schema format
         try:
             logger.info("Starting OpenAI data extraction")
-            processed_data_schema = openai_service.extract_receipt_data_as_schema(receipt.raw_text)
             
-            if not processed_data_schema:
+            # Primary extraction for model (with validation)
+            processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
+            
+            if not processed_data_model:
                 logger.error("OpenAI extraction returned no structured data", extra={
                     "receipt_id": receipt_id,
                     "text_length": len(receipt.raw_text),
@@ -184,7 +186,48 @@ async def process_receipt(
                 })
                 raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
             
-            logger.info("OpenAI schema extraction successful", extra={
+            # Store the model data
+            receipt.processed_data = processed_data_model
+            receipt.updated_at = datetime.now()
+            receipts_storage[receipt_id] = receipt
+            
+            # Convert to schema format for API response
+            from app.schemas.receipt_schema import ReceiptDataSchema, StoreInfoSchema, BillItemSchema, TaxOrChargeSchema
+            
+            processed_data_schema = ReceiptDataSchema(
+                receipt_number=processed_data_model.receipt_number,
+                date=processed_data_model.date,
+                time=processed_data_model.time,
+                store=StoreInfoSchema(
+                    name=processed_data_model.store.name,
+                    address=processed_data_model.store.address,
+                    phone=processed_data_model.store.phone
+                ),
+                items=[
+                    BillItemSchema(
+                        name=item.name,
+                        quantity=item.quantity,
+                        unit_price=item.unit_price,
+                        total_price=item.total_price
+                    )
+                    for item in processed_data_model.items
+                ],
+                subtotal=processed_data_model.subtotal,
+                taxes_or_charges=[
+                    TaxOrChargeSchema(
+                        name=tax_charge.name,
+                        amount=tax_charge.amount,
+                        percent=tax_charge.percent
+                    )
+                    for tax_charge in processed_data_model.taxes_or_charges
+                ],
+                grand_total=processed_data_model.grand_total,
+                payment_method=processed_data_model.payment_method,
+                transaction_id=processed_data_model.transaction_id,
+                notes=processed_data_model.notes
+            )
+            
+            logger.info("OpenAI extraction and schema conversion successful", extra={
                 "receipt_id": receipt_id,
                 "extracted_items_count": len(processed_data_schema.items),
                 "grand_total": processed_data_schema.grand_total,
@@ -264,25 +307,6 @@ async def process_receipt(
                 "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
             })
             raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
-        
-        # Also get the model for storage with error handling
-        try:
-            processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
-            if processed_data_model:
-                receipt.processed_data = processed_data_model
-                receipt.updated_at = datetime.now()
-                receipts_storage[receipt_id] = receipt
-                logger.info("Receipt data model stored successfully")
-            else:
-                logger.warning("OpenAI model extraction returned None, schema will be used for response")
-                
-        except Exception as e:
-            logger.warning(f"Failed to extract/store receipt data model: {str(e)}", extra={
-                "receipt_id": receipt_id,
-                "error_type": type(e).__name__,
-                "operation": "model_storage"
-            })
-            # Continue anyway since we have the schema for response
         
         logger.info(f"Successfully processed receipt {receipt_id}")
         

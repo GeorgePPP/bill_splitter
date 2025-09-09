@@ -113,6 +113,7 @@ class OpenAIService:
     def extract_receipt_data_as_schema(self, raw_text: str) -> Optional[Dict[str, Any]]:
         """
         Extract structured receipt data and return as schema object.
+        Uses the main extraction method and converts to schema format.
         
         Args:
             raw_text: Raw text extracted from OCR
@@ -121,7 +122,7 @@ class OpenAIService:
             ReceiptDataSchema object or None if extraction fails
         """
         try:
-            # First get the ReceiptData model
+            # Use the main extraction method
             receipt_data = self.extract_receipt_data(raw_text)
             if not receipt_data:
                 return None
