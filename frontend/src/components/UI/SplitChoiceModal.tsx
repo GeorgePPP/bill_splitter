@@ -17,6 +17,23 @@ export interface SplitChoiceModalProps {
   participants: Person[];
 }
 
+// Fair division function to handle remainders
+function fairDivide(amountCents: number, people: number): number[] {
+  const q = Math.floor(amountCents / people); // base share in cents
+  const r = amountCents % people; // remainder to distribute
+  let shares = Array(people).fill(q); // everyone gets base share
+  
+  // randomly give 1 extra cent to 'r' different people
+  let indices = [...Array(people).keys()]; // [0,1,...,people-1]
+  for (let i = 0; i < r; i++) {
+    const j = Math.floor(Math.random() * indices.length);
+    shares[indices[j]]++; // give extra cent to this person
+    indices.splice(j, 1); // remove to avoid duplicate
+  }
+  
+  return shares; // returns array of amounts in cents
+}
+
 export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
   isOpen,
   onClose,
@@ -27,12 +44,19 @@ export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
 }) => {
   const [splitType, setSplitType] = useState<'equal' | 'unequal'>('equal');
   const [customSplits, setCustomSplits] = useState<ItemSplit[]>(() => {
-    const equalAmount = item.total_price / personIds.length;
-    return personIds.map(personId => ({
-      personId,
-      amount: Math.round(equalAmount * 100) / 100,
-      percentage: Math.round((100 / personIds.length) * 100) / 100,
-    }));
+    // Use fair division for initial equal split
+    const totalCents = Math.round(item.total_price * 100);
+    const sharesCents = fairDivide(totalCents, personIds.length);
+    
+    return personIds.map((personId, index) => {
+      const amountCents = sharesCents[index];
+      const amount = amountCents / 100; // convert back to dollars
+      return {
+        personId,
+        amount: Math.round(amount * 100) / 100, // ensure 2 decimal places
+        percentage: Math.round((amount / item.total_price) * 100 * 100) / 100,
+      };
+    });
   });
   const [error, setError] = useState<string>('');
 
@@ -86,7 +110,7 @@ export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
 
   const handleConfirm = () => {
     if (splitType === 'equal') {
-      onConfirm('equal');
+      onConfirm('equal', customSplits); // Pass the fair division splits
     } else {
       if (validateSplits()) {
         onConfirm('unequal', customSplits);
@@ -99,12 +123,19 @@ export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
     setError('');
     
     if (type === 'equal') {
-      const equalAmount = item.total_price / personIds.length;
-      setCustomSplits(personIds.map(personId => ({
-        personId,
-        amount: Math.round(equalAmount * 100) / 100,
-        percentage: Math.round((100 / personIds.length) * 100) / 100,
-      })));
+      // Recalculate fair division
+      const totalCents = Math.round(item.total_price * 100);
+      const sharesCents = fairDivide(totalCents, personIds.length);
+      
+      setCustomSplits(personIds.map((personId, index) => {
+        const amountCents = sharesCents[index];
+        const amount = amountCents / 100;
+        return {
+          personId,
+          amount: Math.round(amount * 100) / 100,
+          percentage: Math.round((amount / item.total_price) * 100 * 100) / 100,
+        };
+      }));
     }
   };
 
@@ -164,7 +195,7 @@ export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
                 <div>
                   <div className="font-medium text-gray-900">Split Equally</div>
                   <div className="text-sm text-gray-500">
-                    {formatCurrency(item.total_price / personIds.length)} per person
+                    Fair distribution (some may pay ¢1-2 more)
                   </div>
                 </div>
               </div>
@@ -190,6 +221,24 @@ export const SplitChoiceModal: React.FC<SplitChoiceModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Show split breakdown for equal splits */}
+        {splitType === 'equal' && (
+          <div className="bg-blue-50 rounded-lg p-4">
+            <h5 className="text-sm font-medium text-gray-700 mb-2">Equal split breakdown:</h5>
+            <div className="space-y-1">
+              {customSplits.map((split) => (
+                <div key={split.personId} className="flex justify-between text-sm">
+                  <span className="text-gray-600">{getPersonName(split.personId)}:</span>
+                  <span className="font-medium">{formatCurrency(split.amount)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              * Amounts are fairly distributed when total can't be evenly divided
+            </div>
+          </div>
+        )}
 
         {/* Custom split inputs */}
         {splitType === 'unequal' && (
