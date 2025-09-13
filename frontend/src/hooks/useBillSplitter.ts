@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Person } from '@/types/person.types';
 import { BillItem, ReceiptData } from '@/types/bill.types';
 import { PersonSplit } from '@/types/split.types';
@@ -29,7 +29,12 @@ export interface BillSplitterState {
   error: string | null;
 }
 
-export const useBillSplitter = () => {
+export const useBillSplitter = (sessionActions?: {
+  saveStep?: (step: number) => void;
+  saveParticipants?: (participants: Person[]) => void;
+  saveReceiptData?: (receiptData: ReceiptData, receiptId: string) => void;
+  saveSplitResults?: (splitResults: PersonSplit[]) => void;
+}) => {
   const [state, setState] = useState<BillSplitterState>({
     numberOfPeople: 0,
     participants: [],
@@ -76,7 +81,17 @@ export const useBillSplitter = () => {
       ...prev,
       participants,
     }));
-  }, []);
+    // Save participants asynchronously without blocking
+    if (sessionActions?.saveParticipants) {
+      try {
+        sessionActions.saveParticipants(participants).catch(error => {
+          console.error('Failed to save participants:', error);
+        });
+      } catch (error) {
+        console.error('Session action failed:', error);
+      }
+    }
+  }, [sessionActions]);
 
   const setReceiptData = useCallback((receiptData: ReceiptData, receiptId: string) => {
     setState(prev => ({
@@ -88,7 +103,8 @@ export const useBillSplitter = () => {
         assignedTo: null,
       })),
     }));
-  }, []);
+    sessionActions?.saveReceiptData(receiptData, receiptId);
+  }, [sessionActions]);
 
   const assignItem = useCallback((itemIndex: number, personId: string) => {
     setState(prev => ({
@@ -117,15 +133,24 @@ export const useBillSplitter = () => {
       ...prev,
       splitResults: results,
     }));
-  }, []);
+    sessionActions?.saveSplitResults(results);
+  }, [sessionActions]);
 
   const nextStep = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      currentStep: Math.min(prev.currentStep + 1, 5),
-      error: null,
-    }));
-  }, []);
+    setState(prev => {
+      const newStep = Math.min(prev.currentStep + 1, 5);
+      try {
+        sessionActions?.saveStep?.(newStep);
+      } catch (error) {
+        console.error('Failed to save step:', error);
+      }
+      return {
+        ...prev,
+        currentStep: newStep,
+        error: null,
+      };
+    });
+  }, [sessionActions]);
 
   const prevStep = useCallback(() => {
     setState(prev => ({
@@ -136,12 +161,20 @@ export const useBillSplitter = () => {
   }, []);
 
   const goToStep = useCallback((step: number) => {
-    setState(prev => ({
-      ...prev,
-      currentStep: Math.max(1, Math.min(step, 5)),
-      error: null,
-    }));
-  }, []);
+    setState(prev => {
+      const newStep = Math.max(1, Math.min(step, 5));
+      try {
+        sessionActions?.saveStep?.(newStep);
+      } catch (error) {
+        console.error('Failed to save step:', error);
+      }
+      return {
+        ...prev,
+        currentStep: newStep,
+        error: null,
+      };
+    });
+  }, [sessionActions]);
 
   const setLoading = useCallback((loading: boolean) => {
     setState(prev => ({
@@ -166,6 +199,27 @@ export const useBillSplitter = () => {
       itemAssignments: [],
       splitResults: null,
       currentStep: 1,
+      isLoading: false,
+      error: null,
+    });
+  }, []);
+
+  const restoreState = useCallback((sessionData: {
+    currentStep: number;
+    participants: Person[];
+    receiptData: ReceiptData | null;
+    receiptId: string | null;
+    itemAssignments: Array<{ item: BillItem; assignedTo: string | null }>;
+    splitResults: PersonSplit[] | null;
+  }) => {
+    setState({
+      numberOfPeople: sessionData.participants.length,
+      participants: sessionData.participants,
+      receiptData: sessionData.receiptData,
+      receiptId: sessionData.receiptId,
+      itemAssignments: sessionData.itemAssignments,
+      splitResults: sessionData.splitResults,
+      currentStep: sessionData.currentStep,
       isLoading: false,
       error: null,
     });
@@ -205,6 +259,7 @@ export const useBillSplitter = () => {
       setLoading,
       setError,
       reset,
+      restoreState,
       canProceedToNextStep,
     },
   };

@@ -28,8 +28,13 @@ class Settings(BaseSettings):
     max_file_size: int = int(os.getenv("MAX_FILE_SIZE", "10485760"))  # 10MB
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
     
+    # Supabase
+    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
+    
     class Config:
         env_file = ".env"
+        extra = "ignore"  # Allow extra fields to be ignored
 
 
 settings = Settings()

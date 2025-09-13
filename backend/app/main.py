@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
 from .core.middleware import setup_cors
 from .core.logging import setup_logging
-from .api.routes import health, receipt, bill, split
+from .api.routes import health, receipt, bill, split, session
 
 # Setup logging
 setup_logging()
@@ -25,6 +25,7 @@ app.include_router(health.router)
 app.include_router(receipt.router)
 app.include_router(bill.router)
 app.include_router(split.router)
+app.include_router(session.router)
 
 
 @app.get("/")

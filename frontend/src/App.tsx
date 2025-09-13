@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/Layout/Header';
 import { Footer } from '@/components/Layout/Footer';
 import { Container } from '@/components/Layout/Container';
@@ -11,19 +11,35 @@ import { useReceiptOCR } from '@/hooks/useReceiptOCR';
 import { usePersonManager } from '@/hooks/usePersonManager';
 import { useItemAssignment, ItemSplit } from '@/hooks/useItemAssignment';
 import { useCalculations } from '@/hooks/useCalculations';
-import { receiptService } from '@/services/receiptService';
-import { splitService } from '@/services/splitService';
-import { Person } from '@/types/person.types';
-import { ReceiptData } from '@/types/bill.types';
+import { useSession } from '@/hooks/useSession';
 
 const App: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
-  const billSplitter = useBillSplitter();
+  // Initialize session first
+  const session = useSession();
+  
+  // Initialize other hooks with session actions
+  const billSplitter = useBillSplitter({
+    saveStep: session.actions.saveStep,
+    saveParticipants: session.actions.saveParticipants,
+    saveReceiptData: session.actions.saveReceiptData,
+    saveSplitResults: session.actions.saveSplitResults,
+  });
   const receiptOCR = useReceiptOCR();
   const personManager = usePersonManager();
   const itemAssignment = useItemAssignment();
   const calculations = useCalculations();
+
+  // Create session on app start
+  useEffect(() => {
+    if (session.state.isInitialized && !session.state.sessionToken && !session.state.hasExistingSession) {
+      session.actions.createNewSession().catch(error => {
+        console.error('Failed to create session on startup:', error);
+        // Continue without session - app will still work
+      });
+    }
+  }, [session.state.isInitialized, session.state.sessionToken, session.state.hasExistingSession, session.actions]);
 
   const handleReceiptUpload = async (file: File) => {
     try {
@@ -50,10 +66,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleMultipleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[]) => {
-    // This will trigger the split choice modal
-    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, 'equal');
-  };
 
   const handleReceiptProcessed = async () => {
     // This is called when the user clicks "Process Receipt" button
@@ -107,11 +119,14 @@ const App: React.FC = () => {
   };
 
   const handleStartOver = () => {
+    // Reset all state and go back to step 1
     billSplitter.actions.reset();
     receiptOCR.actions.reset();
     personManager.actions.reset();
     itemAssignment.actions.reset();
     calculations.actions.reset();
+    // Session and known participants are preserved automatically
+    console.log('Starting over - known participants preserved:', session.actions.getKnownParticipants().length);
   };
 
   const handleShare = () => {
@@ -130,6 +145,7 @@ const App: React.FC = () => {
         return (
           <ParticipantManager
             participants={billSplitter.state.participants}
+            knownParticipants={session.actions.getKnownParticipants()}
             onParticipantsChange={billSplitter.actions.setParticipants}
             onNext={billSplitter.actions.nextStep}
             disabled={billSplitter.state.isLoading}
@@ -189,6 +205,18 @@ const App: React.FC = () => {
     }
   };
 
+  // Show loading while session is initializing
+  if (!session.state.isInitialized) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Initializing session...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header
@@ -198,6 +226,23 @@ const App: React.FC = () => {
       
       <main className="flex-1 py-8">
         <Container>
+          {/* Session Error */}
+          {session.state.error && (
+            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center space-x-2">
+                <div className="text-red-500">⚠️</div>
+                <p className="text-red-700">{session.state.error}</p>
+                <button
+                  onClick={() => session.actions.createNewSession()}
+                  className="ml-auto text-red-500 hover:text-red-700"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Bill Splitter Error */}
           {billSplitter.state.error && (
             <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-center space-x-2">

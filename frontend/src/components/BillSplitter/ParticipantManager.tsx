@@ -7,6 +7,7 @@ import { User, Mail, Phone, Plus, Trash2, Users, AlertCircle } from 'lucide-reac
 
 export interface ParticipantManagerProps {
   participants: Person[];
+  knownParticipants?: Person[];
   onParticipantsChange: (participants: Person[]) => void;
   onNext: () => void;
   disabled?: boolean;
@@ -14,6 +15,7 @@ export interface ParticipantManagerProps {
 
 export const ParticipantManager: React.FC<ParticipantManagerProps> = ({
   participants,
+  knownParticipants = [],
   onParticipantsChange,
   onNext,
   disabled = false,
@@ -151,6 +153,56 @@ export const ParticipantManager: React.FC<ParticipantManagerProps> = ({
               </div>
             )}
           </div>
+
+          {/* Known Participants - Quick Add */}
+          {(() => {
+            const availableParticipants = knownParticipants.filter(known => 
+              !participants.some(p => p.id === known.id)
+            );
+            return availableParticipants.length > 0 && (
+              <Card className="mb-8">
+                <CardContent className="pt-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                    Previously Added People
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Click to quickly add people you've used before:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {availableParticipants.map(person => {
+                      // Debug log (remove in production)
+                      console.log('Rendering known participant:', person);
+                      return (
+                      <button
+                        key={person.id}
+                        onClick={() => {
+                          const newParticipants = [...participants, person];
+                          onParticipantsChange(newParticipants);
+                        }}
+                        disabled={disabled}
+                        className="p-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <User className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-blue-900 truncate">
+                              {person.name || 'Unnamed Person'}
+                            </p>
+                            {person.email && (
+                              <p className="text-xs text-blue-600 truncate">{person.email}</p>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Participants List */}
           {participants.length > 0 && (

@@ -39,7 +39,16 @@ export interface ItemAssignmentState {
   } | null;
 }
 
-export const useItemAssignment = () => {
+export const useItemAssignment = (sessionActions?: {
+  saveItemAssignments: (assignments: Array<{ item: BillItem; assignedTo: string | null }>) => void;
+}) => {
+  // Helper function to convert ItemAssignment to session format
+  const convertToSessionFormat = (assignments: ItemAssignment[]): Array<{ item: BillItem; assignedTo: string | null }> => {
+    return assignments.map(assignment => ({
+      item: assignment.item,
+      assignedTo: assignment.isMultipleAssignment ? null : assignment.assignedTo,
+    }));
+  };
   const [state, setState] = useState<ItemAssignmentState>({
     assignments: [],
     selectedItem: null,
@@ -125,9 +134,8 @@ export const useItemAssignment = () => {
     }
 
     // Proceed with single assignment
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) =>
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) =>
         index === itemIndex
           ? { 
               ...assignment, 
@@ -136,13 +144,18 @@ export const useItemAssignment = () => {
               isMultipleAssignment: false,
             }
           : assignment
-      ),
-      error: null,
-      pendingAssignment: null,
-    }));
+      );
+      sessionActions?.saveItemAssignments(convertToSessionFormat(newAssignments));
+      return {
+        ...prev,
+        assignments: newAssignments,
+        error: null,
+        pendingAssignment: null,
+      };
+    });
     
     return { requiresConfirmation: false, duplicateInfo: null };
-  }, [checkForDuplicateAssignment, state.assignments]);
+  }, [checkForDuplicateAssignment, state.assignments, sessionActions, convertToSessionFormat]);
 
   const assignItemToMultiplePeople = useCallback((itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => {
     const assignment = state.assignments[itemIndex];

@@ -89,7 +89,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
       {/* Person Splits */}
       <div className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-900">Individual Splits</h3>
-        {personSplits.map((split, index) => (
+        {personSplits.map((split) => (
           <Card key={split.person_id}>
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
@@ -175,7 +175,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
           <div className="flex flex-wrap gap-3 justify-center">
             <Button
               onClick={onStartOver}
-              variant="outline"
+              variant="primary"
               disabled={disabled}
             >
               Split Another Bill
