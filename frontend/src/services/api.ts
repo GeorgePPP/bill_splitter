@@ -7,7 +7,7 @@ class ApiClient {
   constructor() {
     this.client = axios.create({
       baseURL: '/api',
-      timeout: 30000,
+      timeout: 120000,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -38,6 +38,12 @@ class ApiClient {
         return response;
       },
       (error: AxiosError) => {
+        console.log('[API Client] Error intercepted:', {
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message,
+        });
+        
         const apiError: ApiError = {
           message: error.message || 'An error occurred',
           status: error.response?.status || 500,

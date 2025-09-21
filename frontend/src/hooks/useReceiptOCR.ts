@@ -87,29 +87,41 @@ export const useReceiptOCR = () => {
         isProcessing: false,
         processedData: response.processed_data || null,
         extractedData: response.processed_data || null,
+        needsValidation: false,
       }));
 
       return response;
     } catch (error) {
       const apiError = error as ApiError;
+      console.log('[useReceiptOCR] Process receipt error:', apiError);
       
       // Check if this is a validation error (422)
       if (apiError.status === 422) {
         // Extract the data from error details
-        const extractedData = apiError.details?.extracted_data;
+        const errorDetails = apiError.details?.detail || apiError.details;
+        const extractedData = errorDetails?.extracted_data;
+        
+        console.log('[useReceiptOCR] Validation error detected:', {
+          status: apiError.status,
+          errorDetails,
+          extractedData,
+          hasExtractedData: !!extractedData
+        });
         
         setState(prev => ({
           ...prev,
           isProcessing: false,
-          validationError: apiError.details || apiError.message,
+          validationError: errorDetails || apiError.message,
           extractedData: extractedData || null,
           needsValidation: true,
+          receiptId: receiptId, // Ensure receipt ID is preserved
         }));
       } else {
         setState(prev => ({
           ...prev,
           isProcessing: false,
           error: apiError.message || 'Failed to process receipt',
+          needsValidation: false,
         }));
       }
       throw error;

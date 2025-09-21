@@ -35,6 +35,21 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
 }) => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [shouldShowValidationModal, setShouldShowValidationModal] = useState(false);
+
+  // Update modal visibility when needsValidation changes
+  React.useEffect(() => {
+    console.log('[ReceiptUploader] Validation state changed:', {
+      needsValidation,
+      extractedData,
+      preview,
+      validationError
+    });
+    
+    if (needsValidation && extractedData && preview) {
+      setShouldShowValidationModal(true);
+    }
+  }, [needsValidation, extractedData, preview]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -48,10 +63,12 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
 
     setUploadedFile(file);
     
-    // Create preview
+    // Create preview and keep it
     const reader = new FileReader();
     reader.onload = (e) => {
-      setPreview(e.target?.result as string);
+      const previewUrl = e.target?.result as string;
+      setPreview(previewUrl);
+      console.log('[ReceiptUploader] Preview created');
     };
     reader.readAsDataURL(file);
 
