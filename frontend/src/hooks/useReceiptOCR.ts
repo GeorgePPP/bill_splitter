@@ -10,7 +10,10 @@ export interface ReceiptOCRState {
   receiptId: string | null;
   rawText: string | null;
   processedData: ReceiptData | null;
+  extractedData: any | null; // Raw extracted data even if validation fails
   error: string | null;
+  validationError: any | null;
+  needsValidation: boolean;
 }
 
 export const useReceiptOCR = () => {
@@ -21,7 +24,10 @@ export const useReceiptOCR = () => {
     receiptId: null,
     rawText: null,
     processedData: null,
+    extractedData: null,
     error: null,
+    validationError: null,
+    needsValidation: false,
   });
 
   const uploadReceipt = useCallback(async (file: File) => {
@@ -69,6 +75,8 @@ export const useReceiptOCR = () => {
       ...prev,
       isProcessing: true,
       error: null,
+      validationError: null,
+      needsValidation: false,
     }));
 
     try {
@@ -78,16 +86,76 @@ export const useReceiptOCR = () => {
         ...prev,
         isProcessing: false,
         processedData: response.processed_data || null,
+        extractedData: response.processed_data || null,
       }));
 
       return response;
     } catch (error) {
       const apiError = error as ApiError;
+      
+      // Check if this is a validation error (422)
+      if (apiError.status === 422) {
+        // Extract the data from error details
+        const extractedData = apiError.details?.extracted_data;
+        
+        setState(prev => ({
+          ...prev,
+          isProcessing: false,
+          validationError: apiError.details || apiError.message,
+          extractedData: extractedData || null,
+          needsValidation: true,
+        }));
+      } else {
+        setState(prev => ({
+          ...prev,
+          isProcessing: false,
+          error: apiError.message || 'Failed to process receipt',
+        }));
+      }
+      throw error;
+    }
+  }, []);
+
+  const reprocessWithCorrectedData = useCallback(async (receiptId: string, correctedData: any) => {
+    setState(prev => ({
+      ...prev,
+      isProcessing: true,
+      error: null,
+      validationError: null,
+      needsValidation: false,
+    }));
+
+    try {
+      const response = await receiptService.reprocessReceipt(receiptId, correctedData);
+
       setState(prev => ({
         ...prev,
         isProcessing: false,
-        error: apiError.message || 'Failed to process receipt',
+        processedData: response.processed_data || null,
+        extractedData: response.processed_data || null,
+        needsValidation: false,
       }));
+
+      return response;
+    } catch (error) {
+      const apiError = error as ApiError;
+      
+      // Check if this is still a validation error
+      if (apiError.status === 422) {
+        setState(prev => ({
+          ...prev,
+          isProcessing: false,
+          validationError: apiError.details || apiError.message,
+          extractedData: correctedData, // Keep the user's corrected data
+          needsValidation: true,
+        }));
+      } else {
+        setState(prev => ({
+          ...prev,
+          isProcessing: false,
+          error: apiError.message || 'Failed to reprocess receipt',
+        }));
+      }
       throw error;
     }
   }, []);
@@ -101,6 +169,7 @@ export const useReceiptOCR = () => {
         receiptId: response.id,
         rawText: response.raw_text,
         processedData: response.processed_data || null,
+        extractedData: response.processed_data || null,
       }));
 
       return response;
@@ -123,6 +192,7 @@ export const useReceiptOCR = () => {
         receiptId: null,
         rawText: null,
         processedData: null,
+        extractedData: null,
       }));
     } catch (error) {
       const apiError = error as ApiError;
@@ -142,7 +212,10 @@ export const useReceiptOCR = () => {
       receiptId: null,
       rawText: null,
       processedData: null,
+      extractedData: null,
       error: null,
+      validationError: null,
+      needsValidation: false,
     });
   }, []);
 
@@ -160,6 +233,7 @@ export const useReceiptOCR = () => {
       processReceipt,
       getReceipt,
       deleteReceipt,
+      reprocessWithCorrectedData,
       reset,
       clearError,
     },

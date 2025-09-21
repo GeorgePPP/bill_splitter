@@ -10,6 +10,10 @@ export class ReceiptService {
     return apiClient.post(`/receipt/process/${receiptId}`);
   }
 
+  async reprocessReceipt(receiptId: string, correctedData: any): Promise<ReceiptProcessResponse> {
+    return apiClient.post(`/receipt/reprocess/${receiptId}`, correctedData);
+  }
+
   async getReceipt(receiptId: string): Promise<{
     id: string;
     filename: string;

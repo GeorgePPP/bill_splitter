@@ -153,10 +153,7 @@ async def process_receipt(
         logger.info(f"Processing receipt: {receipt_id}")
         
         if receipt_id not in receipts_storage:
-            logger.warning(f"Receipt not found in storage: {receipt_id}", extra={
-                "receipt_id": receipt_id,
-                "operation": "receipt_lookup"
-            })
+            logger.warning(f"Receipt not found in storage: {receipt_id}")
             raise HTTPException(status_code=404, detail="Receipt not found")
         
         receipt = receipts_storage[receipt_id]
@@ -164,14 +161,10 @@ async def process_receipt(
         
         # Validate raw text before processing
         if not receipt.raw_text or receipt.raw_text.strip() == "":
-            logger.error("Receipt has no raw text to process", extra={
-                "receipt_id": receipt_id,
-                "filename": receipt.filename,
-                "operation": "openai_processing"
-            })
+            logger.error("Receipt has no raw text to process")
             raise HTTPException(status_code=400, detail="Receipt has no text data to process")
         
-        # Single extraction call - get both model and schema format
+        # Single extraction call - this includes validation
         try:
             logger.info("Starting OpenAI data extraction")
             
@@ -179,11 +172,7 @@ async def process_receipt(
             processed_data_model = openai_service.extract_receipt_data(receipt.raw_text)
             
             if not processed_data_model:
-                logger.error("OpenAI extraction returned no structured data", extra={
-                    "receipt_id": receipt_id,
-                    "text_length": len(receipt.raw_text),
-                    "operation": "openai_extraction"
-                })
+                logger.error("OpenAI extraction returned no structured data")
                 raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
             
             # Store the model data
@@ -192,8 +181,6 @@ async def process_receipt(
             receipts_storage[receipt_id] = receipt
             
             # Convert to schema format for API response
-            from app.schemas.receipt_schema import ReceiptDataSchema, StoreInfoSchema, BillItemSchema, TaxOrChargeSchema
-            
             processed_data_schema = ReceiptDataSchema(
                 receipt_number=processed_data_model.receipt_number,
                 date=processed_data_model.date,
@@ -227,99 +214,83 @@ async def process_receipt(
                 notes=processed_data_model.notes
             )
             
-            logger.info("OpenAI extraction and schema conversion successful", extra={
-                "receipt_id": receipt_id,
-                "extracted_items_count": len(processed_data_schema.items),
-                "grand_total": processed_data_schema.grand_total,
-                "store_name": processed_data_schema.store.name
-            })
+            logger.info("OpenAI extraction and schema conversion successful")
             
-        except HTTPException:
-            raise
+            return ReceiptProcessResponse(
+                success=True,
+                message="Receipt processed successfully",
+                processed_data=processed_data_schema
+            )
+            
         except ValueError as e:
-            # Handle calculation validation errors specifically with enhanced user feedback
+            # Handle calculation validation errors specifically
             error_msg = str(e)
-            logger.error(f"Receipt calculation validation failed: {error_msg}", extra={
-                "receipt_id": receipt_id,
-                "error_type": "calculation_validation_error",
-                "operation": "openai_extraction",
-                "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
-            })
+            logger.error(f"Receipt calculation validation failed: {error_msg}")
             
-            # Provide user-friendly error messages based on error type
+            # Get the extracted (but unvalidated) data from the exception
+            extracted_data_dict = None
+            if hasattr(e, 'unvalidated_data') and e.unvalidated_data:
+                unvalidated = e.unvalidated_data
+                extracted_data_dict = {
+                    "receipt_number": unvalidated.receipt_number,
+                    "date": unvalidated.date,
+                    "time": unvalidated.time,
+                    "store": {
+                        "name": unvalidated.store.name,
+                        "address": unvalidated.store.address,
+                        "phone": unvalidated.store.phone
+                    },
+                    "items": [
+                        {
+                            "name": item.name,
+                            "quantity": item.quantity,
+                            "unit_price": item.unit_price,
+                            "total_price": item.total_price
+                        }
+                        for item in unvalidated.items
+                    ],
+                    "subtotal": unvalidated.subtotal,
+                    "taxes_or_charges": [
+                        {
+                            "name": tc.name,
+                            "amount": tc.amount,
+                            "percent": getattr(tc, 'percent', None)
+                        }
+                        for tc in unvalidated.taxes_or_charges
+                    ],
+                    "grand_total": unvalidated.grand_total,
+                    "payment_method": unvalidated.payment_method,
+                    "transaction_id": unvalidated.transaction_id,
+                    "notes": unvalidated.notes
+                }
+            
+            # User-friendly error message
             user_friendly_msg = error_msg
             if "Items total" in error_msg and "does not match" in error_msg:
-                if "provided subtotal" in error_msg:
-                    user_friendly_msg = (
-                        "The individual item prices don't add up to the subtotal shown on the receipt. "
-                        "This could be due to: 1) Discounts applied to individual items, 2) OCR reading errors, "
-                        "or 3) Rounding differences. Please verify the receipt and try again."
-                    )
-                elif "calculated subtotal" in error_msg:
-                    user_friendly_msg = (
-                        "The individual item prices don't match the expected subtotal (calculated from grand total minus taxes). "
-                        "This suggests: 1) Taxes may be inclusive in item prices, 2) There are additional charges not captured, "
-                        "or 3) The receipt format is non-standard. Please check the receipt structure."
-                    )
-            elif "Grand total validation failed" in error_msg:
                 user_friendly_msg = (
-                    "The grand total doesn't match the expected calculation (subtotal + taxes). "
-                    "This often happens when taxes are already included in the grand total. "
-                    "Please verify if this receipt uses tax-inclusive pricing."
-                )
-            elif "Items total" in error_msg and "matches neither scenario" in error_msg:
-                user_friendly_msg = (
-                    "The individual item prices don't match either expected calculation method. "
-                    "This could indicate: 1) Mixed tax-inclusive and tax-exclusive items, 2) Additional discounts or charges not captured, "
-                    "or 3) Calculation errors on the receipt. Please verify the receipt structure."
-                )
-            elif "Cannot calculate subtotal" in error_msg:
-                user_friendly_msg = (
-                    "Unable to determine the amount before tax because the grand total is less than the stated taxes/charges. "
-                    "This typically indicates tax-inclusive pricing where taxes are already included in the total. "
-                    "Please check the receipt format or contact support if this appears to be an error."
-                )
-            elif "Grand total is missing" in error_msg:
-                user_friendly_msg = (
-                    "The final amount payable (grand total) could not be found on the receipt. "
-                    "Please ensure the receipt clearly shows the total amount paid."
+                    "The individual item prices don't add up to the subtotal shown on the receipt. "
+                    "Please review and correct the amounts in the validation screen."
                 )
             
             raise HTTPException(
-                status_code=422, 
+                status_code=422,
                 detail={
                     "error": "Receipt Calculation Validation Failed",
                     "message": user_friendly_msg,
                     "technical_details": error_msg,
+                    "extracted_data": extracted_data_dict,
                     "suggestions": [
-                        "Verify that the receipt image is clear and all text is visible",
-                        "Check if the receipt uses tax-inclusive or tax-exclusive pricing",
-                        "Ensure all items and charges are clearly printed on the receipt",
-                        "Try uploading a higher quality image if the current one is blurry"
+                        "Review the extracted amounts",
+                        "Check for OCR errors in item prices",
+                        "Verify tax calculations"
                     ]
                 }
             )
-        except Exception as e:
-            logger.error(f"Unexpected error during OpenAI extraction: {str(e)}", extra={
-                "receipt_id": receipt_id,
-                "error_type": type(e).__name__,
-                "operation": "openai_extraction",
-                "text_preview": receipt.raw_text[:200] + "..." if len(receipt.raw_text) > 200 else receipt.raw_text
-            })
-            raise HTTPException(status_code=500, detail="Failed to extract structured data from receipt")
-        
-        logger.info(f"Successfully processed receipt {receipt_id}")
-        
-        return ReceiptProcessResponse(
-            success=True,
-            message="Receipt processed successfully",
-            processed_data=processed_data_schema
-        )
-        
+                    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing receipt {receipt_id}: {str(e)}")
+        logger.error(f"Error processing receipt {receipt_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{receipt_id}")
@@ -380,4 +351,139 @@ async def delete_receipt(
         raise
     except Exception as e:
         logger.error(f"Error deleting receipt {receipt_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    
+@router.post("/reprocess/{receipt_id}", response_model=ReceiptProcessResponse)
+async def reprocess_receipt_with_corrections(
+    receipt_id: str,
+    corrected_data: ReceiptDataSchema,
+    current_user = Depends(get_current_user),
+    logger = Depends(get_logger_dependency)
+):
+    """
+    Reprocess receipt with user-corrected data.
+    """
+    try:
+        logger.info(f"Reprocessing receipt {receipt_id} with user corrections")
+        
+        if receipt_id not in receipts_storage:
+            logger.warning(f"Receipt not found in storage: {receipt_id}")
+            raise HTTPException(status_code=404, detail="Receipt not found")
+        
+        receipt = receipts_storage[receipt_id]
+        
+        # Convert corrected schema data to model format
+        from app.models.receipt import ReceiptData, StoreInfo, BillItem, TaxOrCharge
+        
+        processed_data_model = ReceiptData(
+            receipt_number=corrected_data.receipt_number,
+            date=corrected_data.date,
+            time=corrected_data.time,
+            store=StoreInfo(
+                name=corrected_data.store.name,
+                address=corrected_data.store.address,
+                phone=corrected_data.store.phone
+            ),
+            items=[
+                BillItem(
+                    name=item.name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    total_price=item.total_price
+                )
+                for item in corrected_data.items
+            ],
+            subtotal=corrected_data.subtotal,
+            taxes_or_charges=[
+                TaxOrCharge(
+                    name=tc.name,
+                    amount=tc.amount,
+                    percent=tc.percent
+                )
+                for tc in corrected_data.taxes_or_charges
+            ],
+            grand_total=corrected_data.grand_total,
+            payment_method=corrected_data.payment_method,
+            transaction_id=corrected_data.transaction_id,
+            notes=corrected_data.notes
+        )
+        
+        # Validate the corrected data
+        from app.services.receipt_validator import receipt_validator_service
+        
+        try:
+            data_dict = processed_data_model.model_dump()
+            operation_id = f"reprocess_{receipt_id}_{hash(str(data_dict)) % 10000}"
+            
+            validated_data = receipt_validator_service.validate_and_process_receipt(data_dict, operation_id)
+            
+            # Update receipt with validated data
+            receipt.processed_data = ReceiptData(**validated_data)
+            receipt.updated_at = datetime.now()
+            receipts_storage[receipt_id] = receipt
+            
+            # Convert back to schema for response
+            response_data = ReceiptDataSchema(
+                receipt_number=receipt.processed_data.receipt_number,
+                date=receipt.processed_data.date,
+                time=receipt.processed_data.time,
+                store=StoreInfoSchema(
+                    name=receipt.processed_data.store.name,
+                    address=receipt.processed_data.store.address,
+                    phone=receipt.processed_data.store.phone
+                ),
+                items=[
+                    BillItemSchema(
+                        name=item.name,
+                        quantity=item.quantity,
+                        unit_price=item.unit_price,
+                        total_price=item.total_price
+                    )
+                    for item in receipt.processed_data.items
+                ],
+                subtotal=receipt.processed_data.subtotal,
+                taxes_or_charges=[
+                    TaxOrChargeSchema(
+                        name=tc.name,
+                        amount=tc.amount,
+                        percent=tc.percent
+                    )
+                    for tc in receipt.processed_data.taxes_or_charges
+                ],
+                grand_total=receipt.processed_data.grand_total,
+                payment_method=receipt.processed_data.payment_method,
+                transaction_id=receipt.processed_data.transaction_id,
+                notes=receipt.processed_data.notes
+            )
+            
+            logger.info(f"Successfully reprocessed receipt {receipt_id}")
+            
+            return ReceiptProcessResponse(
+                success=True,
+                message="Receipt reprocessed successfully with corrections",
+                processed_data=response_data
+            )
+            
+        except ValueError as e:
+            # Validation still failed
+            error_msg = str(e)
+            logger.error(f"Receipt validation failed after user corrections: {error_msg}")
+            
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Receipt Validation Failed",
+                    "message": error_msg,
+                    "suggestions": [
+                        "Please double-check all amounts",
+                        "Ensure items add up correctly to subtotal",
+                        "Verify taxes are calculated correctly"
+                    ]
+                }
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reprocessing receipt {receipt_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")

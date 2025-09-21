@@ -50,62 +50,54 @@ class OpenAIService:
         self.client = OpenAI(api_key=settings.openai_api_key)
 
     def extract_receipt_data(self, raw_text: str) -> Optional[ReceiptData]:
-        """
-        Extract structured receipt data from raw OCR text using OpenAI WITH validation.
-        
-        Args:
-            raw_text: Raw text extracted from OCR
-            
-        Returns:
-            Validated structured receipt data or None if extraction fails
-        """
         operation_id = f"openai_extract_{hash(raw_text) % 10000}"
         
         try:
-            # Log input analysis
             self._log_input_stats(raw_text, operation_id)
+            logger.info(f"[{operation_id}] Starting OpenAI receipt data extraction")
             
-            logger.info(f"[{operation_id}] Starting OpenAI receipt data extraction", extra={
-                "operation_id": operation_id,
-                "operation_type": "openai_extract_receipt"
-            })
-            
-            # Extract using structured output
             extraction = self._extract_with_structured_output(raw_text, operation_id)
             if not extraction:
                 return None
             
-            # Convert to dictionary for validation
             data_dict = extraction.model_dump()
             ic(data_dict)
             
-            # Post-process and validate calculations
+            # Import at function level to avoid circular imports
+            from app.models.receipt import ReceiptData, StoreInfo, BillItem, TaxOrCharge
+            
+            # Create unvalidated receipt BEFORE validation
+            unvalidated_receipt = ReceiptData(
+                receipt_number=data_dict.get("receipt_number", "RCP-001"),
+                date=data_dict.get("date", ""),
+                time=data_dict.get("time", ""),
+                store=StoreInfo(**data_dict.get("store", {})),
+                items=[BillItem(**item) for item in data_dict.get("items", [])],
+                subtotal=data_dict.get("subtotal", 0.0),
+                taxes_or_charges=[TaxOrCharge(**tc) for tc in data_dict.get("taxes_or_charges", [])],
+                grand_total=data_dict.get("grand_total", 0.0),
+                payment_method=data_dict.get("payment_method", "Unknown"),
+                transaction_id=data_dict.get("transaction_id"),
+                notes=data_dict.get("notes")
+            )
+            
+            logger.info(f"[{operation_id}] Created unvalidated receipt object")
+            
             try:
-                data_dict = self._post_process_and_validate(data_dict, operation_id)
-            except ValueError as e:
-                logger.error(f"[{operation_id}] Calculation validation failed: {str(e)}", extra={
-                    "operation_id": operation_id,
-                    "error_type": "calculation_validation_failed"
-                })
-                return None
+                validated_dict = self._post_process_and_validate(data_dict, operation_id)
+                validated_dict["items"] = self._expand_items_to_unit_quantity(validated_dict.get("items", []))
+                receipt_data = ReceiptData(**validated_dict)
+                logger.info(f"[{operation_id}] Successfully validated receipt data")
+                return receipt_data
+                
+            except ValueError as ve:
+                logger.error(f"[{operation_id}] Validation failed but extraction succeeded")
+                ve.unvalidated_data = unvalidated_receipt  # Attach the data
+                logger.info(f"[{operation_id}] Attached unvalidated_data to exception")
+                raise ve
             
-            # Normalize items: expand any item with quantity > 1 into multiple items with quantity 1
-            data_dict["items"] = self._expand_items_to_unit_quantity(data_dict.get("items", []))
-            
-            # Create ReceiptData object
-            receipt_data = ReceiptData(**data_dict)
-            
-            logger.info(f"[{operation_id}] Successfully created ReceiptData object", extra={
-                "operation_id": operation_id,
-                "success": True,
-                "receipt_number": receipt_data.receipt_number,
-                "store_name": receipt_data.store.name,
-                "items_count": len(receipt_data.items),
-                "grand_total": receipt_data.grand_total
-            })
-            
-            return receipt_data
-            
+        except ValueError:
+            raise
         except Exception as e:
             self._log_extraction_error(e, operation_id)
             return None
@@ -183,6 +175,7 @@ class OpenAIService:
             system_prompt = """You are a receipt data extraction expert. Extract information from receipt text with these rules:
 
 CRITICAL EXTRACTION RULES:
+0. Remember to extract all the items, do not miss a single one especially for the long one
 1. The grand_total field is MANDATORY - it must be the FINAL amount payable from the receipt
 2. Extract ALL taxes, charges, service charges, discounts, and fees into the taxes_or_charges array
 3. For discounts, use NEGATIVE amounts in taxes_or_charges (e.g., {"name": "Discount", "amount": -5.00})
@@ -238,11 +231,11 @@ Extract all the information according to the schema provided."""
             # Log API call
             logger.info(f"[{operation_id}] Sending structured output request to OpenAI", extra={
                 "operation_id": operation_id,
-                "model": "gpt-4o",
+                "model": "gpt-5",
             })
 
             completion = self.client.chat.completions.parse(
-                model="gpt-4o",
+                model="gpt-5",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}

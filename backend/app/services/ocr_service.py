@@ -106,7 +106,7 @@ class OCRService:
             # Use prebuilt-read with markdown output format
             poller = self.client.begin_analyze_document(
                 model_id="prebuilt-read",
-                analyze_request=analyze_request,
+                body=analyze_request,
                 output_content_format="markdown"
             )
             
