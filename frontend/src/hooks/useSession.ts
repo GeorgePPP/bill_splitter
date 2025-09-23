@@ -68,6 +68,23 @@ export const useSession = () => {
     }
   }, []);
 
+  // 60-second heartbeat to extend session expiry
+  useEffect(() => {
+    if (!state.sessionToken) return;
+
+    const heartbeat = setInterval(async () => {
+      try {
+        await sessionService.extendSession(state.sessionToken!);
+        console.log('Session heartbeat sent successfully');
+      } catch (error) {
+        console.error('Session heartbeat failed:', error);
+        // Don't clear session on heartbeat failure - user might still be working
+      }
+    }, 60000); // 60 seconds
+
+    return () => clearInterval(heartbeat);
+  }, [state.sessionToken]);
+
   // Remove this function entirely - it's causing circular dependency
 
   const createNewSession = useCallback(async () => {
@@ -187,6 +204,7 @@ export const useSession = () => {
         receiptId: state.sessionData.receipt_id,
         itemAssignments: state.sessionData.item_assignments,
         splitResults: state.sessionData.split_results,
+        ocrText: state.sessionData.ocr_text,
       };
     }
     return null;
@@ -268,6 +286,17 @@ export const useSession = () => {
     }
   }, [state.sessionToken, updateSession]);
 
+  const saveOcrText = useCallback(async (ocrText: string) => {
+    if (!state.sessionToken) return false;
+    try {
+      console.log('Saving OCR text to session (expensive to reprocess)');
+      return await updateSession({ ocr_text: ocrText });
+    } catch (error) {
+      console.error('Failed to save OCR text:', error);
+      return false;
+    }
+  }, [state.sessionToken, updateSession]);
+
   const getKnownParticipants = useCallback(() => {
     const knownParticipants = state.sessionData?.known_participants || [];
     // Filter out any participants with empty or invalid names
@@ -289,6 +318,7 @@ export const useSession = () => {
       saveReceiptData,
       saveItemAssignments,
       saveSplitResults,
+      saveOcrText,
     },
   };
 };

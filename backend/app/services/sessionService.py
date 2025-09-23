@@ -91,7 +91,8 @@ class SessionService:
                 "receipt_id": None,
                 "item_assignments": [],
                 "split_results": None,
-                "known_participants": []  # Store all participants ever added to this session
+                "known_participants": [],  # Store all participants ever added to this session
+                "ocr_text": None  # Store raw OCR text to avoid reprocessing
             }).execute()
             
             if not bill_session_result.data:
@@ -164,6 +165,7 @@ class SessionService:
                 "item_assignments": bill_session["item_assignments"] or [],
                 "split_results": bill_session["split_results"],
                 "known_participants": bill_session.get("known_participants", []),
+                "ocr_text": bill_session.get("ocr_text"),
                 "created_at": bill_session["created_at"],
                 "updated_at": bill_session["updated_at"]
             }
@@ -175,8 +177,8 @@ class SessionService:
             logger.error(f"Error retrieving session {session_token}: {str(e)}")
             raise Exception(f"Failed to get session: {str(e)}")
     
-    async def update_session(self, session_token: str, data: Dict[str, Any]) -> bool:
-        """Update session data and extend expiry time"""
+    async def update_session(self, session_token: str, data: Dict[str, Any], extend_expiry: bool = False) -> bool:
+        """Update session data and optionally extend expiry time"""
         if not self.sessions_enabled:
             raise Exception("Session management is disabled. Set ENABLE_SESSIONS=true in .env to enable.")
             
@@ -192,19 +194,21 @@ class SessionService:
                 logger.warning(f"Session not found for update: {session_token}")
                 return False
             
-            # Extend session expiry by 5 minutes on each update (activity-based extension)
-            new_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-            session_update_result = self.supabase.table("sessions").update({
-                "expires_at": new_expires_at.isoformat()
-            }).eq("session_token", session_token).execute()
-            
-            if not session_update_result.data:
-                logger.error(f"Failed to extend session expiry: {session_token}")
-                return False
+            # Only extend session expiry if explicitly requested (for 60-second intervals)
+            if extend_expiry:
+                new_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                session_update_result = self.supabase.table("sessions").update({
+                    "expires_at": new_expires_at.isoformat()
+                }).eq("session_token", session_token).execute()
+                
+                if not session_update_result.data:
+                    logger.error(f"Failed to extend session expiry: {session_token}")
+                    return False
+                logger.info(f"Session expiry extended: {session_token}")
             
             # Prepare update data
             update_data = {}
-            allowed_fields = ["current_step", "participants", "receipt_data", "receipt_id", "item_assignments", "split_results", "known_participants"]
+            allowed_fields = ["current_step", "participants", "receipt_data", "receipt_id", "item_assignments", "split_results", "known_participants", "ocr_text"]
             
             for field in allowed_fields:
                 if field in data:
@@ -227,6 +231,31 @@ class SessionService:
         except Exception as e:
             logger.error(f"Error updating session {session_token}: {str(e)}")
             raise Exception(f"Failed to update session: {str(e)}")
+    
+    async def extend_session_expiry(self, session_token: str) -> bool:
+        """Extend session expiry by 5 minutes (for 60-second heartbeat calls)"""
+        if not self.sessions_enabled:
+            return False
+            
+        if not self.supabase:
+            return False
+            
+        try:
+            new_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+            result = self.supabase.table("sessions").update({
+                "expires_at": new_expires_at.isoformat()
+            }).eq("session_token", session_token).execute()
+            
+            success = len(result.data) > 0 if result.data else False
+            if success:
+                logger.info(f"Session expiry extended: {session_token}")
+            else:
+                logger.warning(f"Failed to extend session expiry - session may not exist: {session_token}")
+                
+            return success
+        except Exception as e:
+            logger.error(f"Error extending session expiry {session_token}: {str(e)}")
+            return False
     
     async def delete_session(self, session_token: str) -> bool:
         """Delete a session"""
@@ -254,21 +283,36 @@ class SessionService:
             raise Exception(f"Failed to delete session: {str(e)}")
     
     async def cleanup_expired_sessions(self) -> int:
-        """Clean up expired sessions"""
+        """Clean up expired sessions (called periodically)"""
+        if not self.sessions_enabled:
+            return 0
+            
         if not self.supabase:
-            raise Exception("Database connection not available. Please check Supabase configuration.")
+            logger.warning("Database connection not available for session cleanup")
+            return 0
             
         try:
-            logger.info("Cleaning up expired sessions")
+            logger.info("Starting cleanup of expired sessions")
             current_time = datetime.now(timezone.utc).isoformat()
-            result = self.supabase.table("sessions").delete().lt("expires_at", current_time).execute()
             
-            count = len(result.data) if result.data else 0
-            logger.info(f"Cleaned up {count} expired sessions")
-            return count
+            # First, get count of expired sessions for logging
+            count_result = self.supabase.table("sessions").select("id").lt("expires_at", current_time).execute()
+            expired_count = len(count_result.data) if count_result.data else 0
+            
+            if expired_count > 0:
+                # Delete expired sessions (bill_sessions will cascade delete if foreign key constraints are set up)
+                result = self.supabase.table("sessions").delete().lt("expires_at", current_time).execute()
+                actual_deleted = len(result.data) if result.data else 0
+                logger.info(f"Cleaned up {actual_deleted} expired sessions")
+                return actual_deleted
+            else:
+                logger.info("No expired sessions to clean up")
+                return 0
+                
         except Exception as e:
             logger.error(f"Error cleaning up expired sessions: {str(e)}")
-            raise Exception(f"Failed to cleanup expired sessions: {str(e)}")
+            # Don't raise exception for cleanup failures - just log and continue
+            return 0
     
 
 # Global instance

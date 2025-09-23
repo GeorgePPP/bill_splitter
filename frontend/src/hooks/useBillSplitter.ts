@@ -30,10 +30,10 @@ export interface BillSplitterState {
 }
 
 export const useBillSplitter = (sessionActions?: {
-  saveStep?: (step: number) => Promise<boolean> | void;
   saveParticipants?: (participants: Person[]) => Promise<boolean> | void;
   saveReceiptData?: (receiptData: ReceiptData, receiptId: string) => Promise<boolean> | void;
   saveSplitResults?: (splitResults: PersonSplit[]) => Promise<boolean> | void;
+  saveOcrText?: (ocrText: string) => Promise<boolean> | void;
 }) => {
   const [state, setState] = useState<BillSplitterState>({
     numberOfPeople: 0,
@@ -157,20 +157,14 @@ export const useBillSplitter = (sessionActions?: {
       const newStep = Math.min(prev.currentStep + 1, 5);
       console.log(`[useBillSplitter] Advancing from step ${prev.currentStep} to ${newStep}`);
       
-      // TEMPORARILY DISABLED: Don't save step to session to prevent redundant DB calls
-      // try {
-      //   sessionActions?.saveStep?.(newStep);
-      // } catch (error) {
-      //   console.error('Failed to save step:', error);
-      // }
-      
+      // Step navigation is now kept in local state only - no DB saves
       return {
         ...prev,
         currentStep: newStep,
         error: null,
       };
     });
-  }, [sessionActions]);
+  }, []);
 
   const prevStep = useCallback(() => {
     setState(prev => ({
@@ -183,18 +177,14 @@ export const useBillSplitter = (sessionActions?: {
   const goToStep = useCallback((step: number) => {
     setState(prev => {
       const newStep = Math.max(1, Math.min(step, 5));
-      try {
-        sessionActions?.saveStep?.(newStep);
-      } catch (error) {
-        console.error('Failed to save step:', error);
-      }
+      // Step navigation is now kept in local state only - no DB saves
       return {
         ...prev,
         currentStep: newStep,
         error: null,
       };
     });
-  }, [sessionActions]);
+  }, []);
 
   const setLoading = useCallback((loading: boolean) => {
     setState(prev => ({

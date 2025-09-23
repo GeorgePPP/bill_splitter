@@ -20,6 +20,7 @@ class UpdateSessionRequest(BaseModel):
     item_assignments: Optional[List[Dict[str, Any]]] = None
     split_results: Optional[List[Dict[str, Any]]] = None
     known_participants: Optional[List[Dict[str, Any]]] = None
+    ocr_text: Optional[str] = None
 
 @router.post("/create")
 async def create_session(request: CreateSessionRequest = CreateSessionRequest()):
@@ -153,5 +154,29 @@ async def delete_session(session_token: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete session: {str(e)}"
+        )
+
+@router.post("/{session_token}/extend")
+async def extend_session(session_token: str):
+    """Extend session expiry (for 60-second heartbeat)"""
+    try:
+        success = await session_service.extend_session_expiry(session_token)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or extension failed"
+            )
+        
+        return {
+            "success": True,
+            "message": "Session expiry extended successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to extend session {session_token}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to extend session: {str(e)}"
         )
 

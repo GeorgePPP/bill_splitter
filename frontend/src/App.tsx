@@ -12,6 +12,8 @@ import { usePersonManager } from '@/hooks/usePersonManager';
 import { useItemAssignment, ItemSplit } from '@/hooks/useItemAssignment';
 import { useCalculations } from '@/hooks/useCalculations';
 import { useSession } from '@/hooks/useSession';
+import { useValidationModal } from '@/hooks/useValidationModal';
+import { ReceiptValidationModal } from '@/components/BillSplitter/ReceiptValidationModal';
 
 const App: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -21,15 +23,16 @@ const App: React.FC = () => {
   
   // Initialize other hooks with session actions
   const billSplitter = useBillSplitter({
-    saveStep: session.actions.saveStep,
     saveParticipants: session.actions.saveParticipants,
     saveReceiptData: session.actions.saveReceiptData,
     saveSplitResults: session.actions.saveSplitResults,
+    saveOcrText: session.actions.saveOcrText,
   });
   const receiptOCR = useReceiptOCR();
   const personManager = usePersonManager();
   const itemAssignment = useItemAssignment();
   const calculations = useCalculations();
+  const validationModal = useValidationModal();
 
   // Create session on app start
   useEffect(() => {
@@ -40,6 +43,37 @@ const App: React.FC = () => {
       });
     }
   }, [session.state.isInitialized, session.state.sessionToken, session.state.hasExistingSession, session.actions]);
+
+  // Restore session data if available
+  useEffect(() => {
+    const restoreSessionData = async () => {
+      if (session.state.hasExistingSession && session.state.sessionData) {
+        console.log('Restoring session data...');
+        const restoredData = await session.actions.restoreSession();
+        
+        if (restoredData) {
+          // Restore bill splitter state
+          billSplitter.actions.restoreState(restoredData);
+          
+          // If receipt data exists, restore validation modal state
+          if (restoredData.receiptData) {
+            validationModal.actions.updateExtractedData(restoredData.receiptData);
+            validationModal.actions.markAsValidated(restoredData.receiptData);
+            
+            // Initialize item assignments
+            itemAssignment.actions.initializeAssignments(restoredData.receiptData.items);
+            // Item assignments will be restored through billSplitter.actions.restoreState
+          }
+          
+          console.log('Session data restored successfully');
+        }
+      }
+    };
+
+    restoreSessionData().catch(error => {
+      console.error('Failed to restore session data:', error);
+    });
+  }, [session.state.hasExistingSession, session.state.sessionData, billSplitter.actions, validationModal.actions, itemAssignment.actions, session.actions]);
 
   const handleReceiptUpload = async (file: File) => {
     try {
@@ -56,14 +90,27 @@ const App: React.FC = () => {
           const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
           console.log('[App] Process response:', processResponse);
           
+          // Save OCR text immediately (expensive to reprocess)
+          if (processResponse.ocr_text) {
+            session.actions.saveOcrText?.(processResponse.ocr_text);
+          }
+          
           if (processResponse.processed_data) {
             // Set receipt data without auto-saving to session (to reduce DB calls)
             console.log('[App] Setting receipt data without auto-save');
             billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id, false);
             itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
             
+            // Store validation modal state globally
+            const imagePreview = URL.createObjectURL(file);
+            validationModal.actions.openModal(
+              imagePreview,
+              processResponse.processed_data,
+              null,
+              processResponse.ocr_text
+            );
+            
             // Don't auto-advance to next step - let validation modal handle the flow
-            // The modal will show for both success and error cases now
           }
         } catch (error) {
           const apiError = error as any;
@@ -74,9 +121,21 @@ const App: React.FC = () => {
             needsValidation: receiptOCR.state.needsValidation
           });
           
-          // If validation error (422), the modal will show automatically
-          // The state is already set in useReceiptOCR hook
-          if (apiError.status !== 422) {
+          // Save OCR text even if processing failed
+          if (apiError.ocr_text) {
+            session.actions.saveOcrText?.(apiError.ocr_text);
+          }
+          
+          // If validation error (422), show validation modal with error data
+          if (apiError.status === 422 && apiError.extracted_data) {
+            const imagePreview = URL.createObjectURL(file);
+            validationModal.actions.openModal(
+              imagePreview,
+              apiError.extracted_data,
+              apiError.details,
+              apiError.ocr_text
+            );
+          } else {
             billSplitter.actions.setError('Failed to process receipt. Please try again.');
           }
         }
@@ -95,29 +154,44 @@ const App: React.FC = () => {
     try {
       billSplitter.actions.setLoading(true);
       
-      if (receiptOCR.state.receiptId) {
+      if (billSplitter.state.receiptId) {
+        // Save corrected data to session immediately (expensive to reprocess)
+        console.log('[App] Saving corrected receipt data to session');
+        session.actions.saveReceiptData?.(correctedData, billSplitter.state.receiptId);
+        
         // Check if this is the initial validation (no changes made) or reprocessing
         const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
         
         if (hasChanges) {
           // User made changes, reprocess with corrected data
           const processResponse = await receiptOCR.actions.reprocessWithCorrectedData(
-            receiptOCR.state.receiptId,
+            billSplitter.state.receiptId,
             correctedData
           );
           
           if (processResponse.processed_data) {
-            billSplitter.actions.setReceiptData(processResponse.processed_data, receiptOCR.state.receiptId);
+            billSplitter.actions.setReceiptData(processResponse.processed_data, billSplitter.state.receiptId, false);
             itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
-            billSplitter.actions.nextStep();
+            
+            // Mark as validated in global state
+            validationModal.actions.markAsValidated(processResponse.processed_data);
+            validationModal.actions.closeModal();
+            
+            // Always go to assignment page (step 3) after validation
+            billSplitter.actions.goToStep(3);
           }
         } else {
-          // No changes made, just proceed with existing data and save to session
+          // No changes made, just proceed with existing data
           if (receiptOCR.state.processedData) {
-            billSplitter.actions.setReceiptData(receiptOCR.state.processedData, receiptOCR.state.receiptId, true); // Save to session
+            billSplitter.actions.setReceiptData(receiptOCR.state.processedData, billSplitter.state.receiptId, false);
             itemAssignment.actions.initializeAssignments(receiptOCR.state.processedData.items);
+            
+            // Mark as validated in global state
+            validationModal.actions.markAsValidated(receiptOCR.state.processedData);
+            validationModal.actions.closeModal();
           }
-          billSplitter.actions.nextStep();
+          // Always go to assignment page (step 3) after validation
+          billSplitter.actions.goToStep(3);
         }
       }
     } catch (error) {
@@ -190,6 +264,7 @@ const App: React.FC = () => {
     personManager.actions.reset();
     itemAssignment.actions.reset();
     calculations.actions.reset();
+    validationModal.actions.reset();
     // Session and known participants are preserved automatically
     console.log('Starting over - known participants preserved:', session.actions.getKnownParticipants().length);
   };
@@ -263,6 +338,7 @@ const App: React.FC = () => {
             totalServiceCharge={calculations.state.totalServiceCharge}
             totalDiscount={calculations.state.totalDiscount}
             onStartOver={handleStartOver}
+            onModifyAssignment={() => billSplitter.actions.goToStep(3)}
             onShare={handleShare}
             onDownload={handleDownload}
             disabled={billSplitter.state.isLoading}
@@ -326,10 +402,42 @@ const App: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* Validation Status Indicator - Only show in Assignment page (step 3) */}
+          {validationModal.state.hasValidatedData && billSplitter.state.currentStep === 3 && (
+            <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="text-green-500">✓</div>
+                  <p className="text-green-700 text-sm">Receipt data has been validated</p>
+                </div>
+                {validationModal.actions.canReopenModal() && (
+                  <button
+                    onClick={validationModal.actions.reopenModal}
+                    className="text-green-600 hover:text-green-800 text-sm font-medium"
+                  >
+                    Revalidate Receipt Data
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           
           {renderStep()}
         </Container>
       </main>
+      
+      {/* Global Validation Modal - Now acts as a "page" */}
+      {validationModal.state.isOpen && validationModal.state.imageUrl && validationModal.state.extractedData && (
+        <ReceiptValidationModal
+          isOpen={validationModal.state.isOpen}
+          onClose={() => {}} // Don't allow closing without validation - this is now a "page"
+          imageUrl={validationModal.state.imageUrl}
+          extractedData={validationModal.state.extractedData}
+          validationErrors={validationModal.state.validationErrors}
+          onValidate={handleValidationCorrection}
+        />
+      )}
       
       <Footer />
     </div>

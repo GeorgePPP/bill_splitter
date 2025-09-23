@@ -62,4 +62,5 @@ export interface ReceiptProcessResponse {
   success: boolean;
   message: string;
   processed_data?: ReceiptData;
+  ocr_text?: string;
 }

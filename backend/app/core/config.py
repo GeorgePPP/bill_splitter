@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
     
     # Session Management
-    enable_sessions: bool = True
+    enable_sessions: bool = False
     
     # Supabase (only required if sessions are enabled)
     supabase_url: str = os.getenv("SUPABASE_URL", "")

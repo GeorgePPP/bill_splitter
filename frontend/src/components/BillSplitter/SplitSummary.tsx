@@ -12,6 +12,7 @@ export interface SplitSummaryProps {
   totalServiceCharge: number;
   totalDiscount: number;
   onStartOver: () => void;
+  onModifyAssignment: () => void;
   onShare: () => void;
   onDownload: () => void;
   disabled?: boolean;
@@ -24,6 +25,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
   totalServiceCharge,
   totalDiscount,
   onStartOver,
+  onModifyAssignment,
   onShare,
   onDownload,
   disabled = false,
@@ -173,6 +175,14 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
       <Card>
         <CardContent className="p-6">
           <div className="flex flex-wrap gap-3 justify-center">
+            <Button
+              onClick={onModifyAssignment}
+              variant="secondary"
+              disabled={disabled}
+              leftIcon={<Users className="h-4 w-4" />}
+            >
+              Modify Assignment
+            </Button>
             <Button
               onClick={onStartOver}
               variant="primary"

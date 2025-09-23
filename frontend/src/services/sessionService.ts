@@ -17,6 +17,7 @@ export interface SessionData {
   }>;
   split_results: PersonSplit[] | null;
   known_participants: Person[];
+  ocr_text: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +47,7 @@ export interface UpdateSessionData {
   }>;
   split_results?: PersonSplit[] | null;
   known_participants?: Person[];
+  ocr_text?: string | null;
 }
 
 class SessionService {
@@ -63,6 +65,10 @@ class SessionService {
 
   async deleteSession(sessionToken: string): Promise<{ success: boolean; message: string }> {
     return apiClient.delete(`/session/${sessionToken}`);
+  }
+
+  async extendSession(sessionToken: string): Promise<{ success: boolean; message: string }> {
+    return apiClient.post(`/session/${sessionToken}/extend`);
   }
 
   // Local storage helpers
