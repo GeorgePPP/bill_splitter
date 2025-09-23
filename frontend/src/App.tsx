@@ -44,23 +44,71 @@ const App: React.FC = () => {
   const handleReceiptUpload = async (file: File) => {
     try {
       billSplitter.actions.setLoading(true);
+      console.log('[App] Starting receipt upload for file:', file.name);
       
       // Upload receipt
       const uploadResponse = await receiptOCR.actions.uploadReceipt(file);
+      console.log('[App] Upload response:', uploadResponse);
       
       if (uploadResponse.receipt_id) {
-        // Process receipt
-        const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
+        // Process receipt - validation errors will be caught and set in state
+        try {
+          const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
+          console.log('[App] Process response:', processResponse);
+          
+          if (processResponse.processed_data) {
+            billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id);
+            itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+            billSplitter.actions.nextStep();
+          }
+        } catch (error) {
+          const apiError = error as any;
+          console.log('[App] Process error:', {
+            status: apiError.status,
+            message: apiError.message,
+            details: apiError.details,
+            needsValidation: receiptOCR.state.needsValidation
+          });
+          
+          // If validation error (422), the modal will show automatically
+          // The state is already set in useReceiptOCR hook
+          if (apiError.status !== 422) {
+            billSplitter.actions.setError('Failed to process receipt. Please try again.');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[App] Error processing receipt:', error);
+      billSplitter.actions.setError('Failed to upload receipt. Please try again.');
+    } finally {
+      billSplitter.actions.setLoading(false);
+    }
+  };
+  
+  // Add this new function:
+  
+  const handleValidationCorrection = async (correctedData: any) => {
+    try {
+      billSplitter.actions.setLoading(true);
+      
+      if (receiptOCR.state.receiptId) {
+        const processResponse = await receiptOCR.actions.reprocessWithCorrectedData(
+          receiptOCR.state.receiptId,
+          correctedData
+        );
         
         if (processResponse.processed_data) {
-          billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id);
+          billSplitter.actions.setReceiptData(processResponse.processed_data, receiptOCR.state.receiptId);
           itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
           billSplitter.actions.nextStep();
         }
       }
     } catch (error) {
-      console.error('Error processing receipt:', error);
-      billSplitter.actions.setError('Failed to process receipt. Please try again.');
+      const apiError = error as any;
+      // If still validation error, modal stays open with new errors
+      if (apiError.status !== 422) {
+        billSplitter.actions.setError('Failed to validate receipt. Please try again.');
+      }
     } finally {
       billSplitter.actions.setLoading(false);
     }
@@ -157,9 +205,13 @@ const App: React.FC = () => {
           <ReceiptUploader
             onReceiptUploaded={handleReceiptUpload}
             onReceiptProcessed={handleReceiptProcessed}
+            onValidationCorrection={handleValidationCorrection}
             isLoading={receiptOCR.state.isUploading || receiptOCR.state.isProcessing}
             uploadProgress={receiptOCR.state.uploadProgress}
             error={receiptOCR.state.error}
+            validationError={receiptOCR.state.validationError}
+            needsValidation={receiptOCR.state.needsValidation}
+            extractedData={receiptOCR.state.extractedData}
             disabled={billSplitter.state.isLoading}
           />
         );
