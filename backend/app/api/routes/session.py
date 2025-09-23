@@ -3,6 +3,9 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from ...services.sessionService import session_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -22,12 +25,24 @@ class UpdateSessionRequest(BaseModel):
 async def create_session(request: CreateSessionRequest = CreateSessionRequest()):
     """Create a new guest session"""
     try:
+        logger.info("Creating new session")
         result = await session_service.create_session(request.user_id)
         return {
             "success": True,
             "data": result
         }
     except Exception as e:
+        logger.error(f"Failed to create session: {str(e)}")
+        if "Session management is disabled" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Session management is disabled. Enable sessions in configuration to use this feature."
+            )
+        elif "Database connection not available" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database service unavailable. Please check configuration."
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create session: {str(e)}"
@@ -37,6 +52,7 @@ async def create_session(request: CreateSessionRequest = CreateSessionRequest())
 async def get_session(session_token: str):
     """Get complete session data"""
     try:
+        logger.info(f"Getting session: {session_token}")
         session_data = await session_service.get_session(session_token)
         if not session_data:
             raise HTTPException(
@@ -51,6 +67,17 @@ async def get_session(session_token: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to get session {session_token}: {str(e)}")
+        if "Session management is disabled" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Session management is disabled. Enable sessions in configuration to use this feature."
+            )
+        elif "Database connection not available" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database service unavailable. Please check configuration."
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get session: {str(e)}"
@@ -60,8 +87,14 @@ async def get_session(session_token: str):
 async def update_session(session_token: str, request: UpdateSessionRequest):
     """Update session data"""
     try:
+        logger.info(f"Updating session: {session_token}")
+        
         # Convert request to dict, excluding None values
-        update_data = {k: v for k, v in request.dict().items() if v is not None}
+        # Use model_dump() for Pydantic v2 compatibility, fallback to dict() for v1
+        try:
+            update_data = {k: v for k, v in request.model_dump().items() if v is not None}
+        except AttributeError:
+            update_data = {k: v for k, v in request.dict().items() if v is not None}
         
         if not update_data:
             raise HTTPException(
@@ -83,6 +116,17 @@ async def update_session(session_token: str, request: UpdateSessionRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to update session {session_token}: {str(e)}")
+        if "Session management is disabled" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Session management is disabled. Enable sessions in configuration to use this feature."
+            )
+        elif "Database connection not available" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database service unavailable. Please check configuration."
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update session: {str(e)}"

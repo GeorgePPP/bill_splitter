@@ -28,7 +28,10 @@ class Settings(BaseSettings):
     max_file_size: int = int(os.getenv("MAX_FILE_SIZE", "10485760"))  # 10MB
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
     
-    # Supabase
+    # Session Management
+    enable_sessions: bool = True
+    
+    # Supabase (only required if sessions are enabled)
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
     

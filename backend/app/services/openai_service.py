@@ -231,11 +231,11 @@ Extract all the information according to the schema provided."""
             # Log API call
             logger.info(f"[{operation_id}] Sending structured output request to OpenAI", extra={
                 "operation_id": operation_id,
-                "model": "gpt-5",
+                "model": "gpt-4o",
             })
 
             completion = self.client.chat.completions.parse(
-                model="gpt-5",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
