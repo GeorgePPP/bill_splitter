@@ -57,9 +57,13 @@ const App: React.FC = () => {
           console.log('[App] Process response:', processResponse);
           
           if (processResponse.processed_data) {
-            billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id);
+            // Set receipt data without auto-saving to session (to reduce DB calls)
+            console.log('[App] Setting receipt data without auto-save');
+            billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id, false);
             itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
-            billSplitter.actions.nextStep();
+            
+            // Don't auto-advance to next step - let validation modal handle the flow
+            // The modal will show for both success and error cases now
           }
         } catch (error) {
           const apiError = error as any;
@@ -92,14 +96,27 @@ const App: React.FC = () => {
       billSplitter.actions.setLoading(true);
       
       if (receiptOCR.state.receiptId) {
-        const processResponse = await receiptOCR.actions.reprocessWithCorrectedData(
-          receiptOCR.state.receiptId,
-          correctedData
-        );
+        // Check if this is the initial validation (no changes made) or reprocessing
+        const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
         
-        if (processResponse.processed_data) {
-          billSplitter.actions.setReceiptData(processResponse.processed_data, receiptOCR.state.receiptId);
-          itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+        if (hasChanges) {
+          // User made changes, reprocess with corrected data
+          const processResponse = await receiptOCR.actions.reprocessWithCorrectedData(
+            receiptOCR.state.receiptId,
+            correctedData
+          );
+          
+          if (processResponse.processed_data) {
+            billSplitter.actions.setReceiptData(processResponse.processed_data, receiptOCR.state.receiptId);
+            itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+            billSplitter.actions.nextStep();
+          }
+        } else {
+          // No changes made, just proceed with existing data and save to session
+          if (receiptOCR.state.processedData) {
+            billSplitter.actions.setReceiptData(receiptOCR.state.processedData, receiptOCR.state.receiptId, true); // Save to session
+            itemAssignment.actions.initializeAssignments(receiptOCR.state.processedData.items);
+          }
           billSplitter.actions.nextStep();
         }
       }

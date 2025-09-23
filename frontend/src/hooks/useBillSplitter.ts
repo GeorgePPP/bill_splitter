@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Person } from '@/types/person.types';
 import { BillItem, ReceiptData } from '@/types/bill.types';
 import { PersonSplit } from '@/types/split.types';
@@ -30,10 +30,10 @@ export interface BillSplitterState {
 }
 
 export const useBillSplitter = (sessionActions?: {
-  saveStep?: (step: number) => void;
-  saveParticipants?: (participants: Person[]) => void;
-  saveReceiptData?: (receiptData: ReceiptData, receiptId: string) => void;
-  saveSplitResults?: (splitResults: PersonSplit[]) => void;
+  saveStep?: (step: number) => Promise<boolean> | void;
+  saveParticipants?: (participants: Person[]) => Promise<boolean> | void;
+  saveReceiptData?: (receiptData: ReceiptData, receiptId: string) => Promise<boolean> | void;
+  saveSplitResults?: (splitResults: PersonSplit[]) => Promise<boolean> | void;
 }) => {
   const [state, setState] = useState<BillSplitterState>({
     numberOfPeople: 0,
@@ -83,17 +83,16 @@ export const useBillSplitter = (sessionActions?: {
     }));
     // Save participants asynchronously without blocking
     if (sessionActions?.saveParticipants) {
-      try {
-        sessionActions.saveParticipants(participants).catch(error => {
+      const result = sessionActions.saveParticipants(participants);
+      if (result && typeof result.catch === 'function') {
+        result.catch((error: any) => {
           console.error('Failed to save participants:', error);
         });
-      } catch (error) {
-        console.error('Session action failed:', error);
       }
     }
   }, [sessionActions]);
 
-  const setReceiptData = useCallback((receiptData: ReceiptData, receiptId: string) => {
+  const setReceiptData = useCallback((receiptData: ReceiptData, receiptId: string, autoSave: boolean = true) => {
     setState(prev => ({
       ...prev,
       receiptData,
@@ -103,7 +102,15 @@ export const useBillSplitter = (sessionActions?: {
         assignedTo: null,
       })),
     }));
-    sessionActions?.saveReceiptData(receiptData, receiptId);
+    
+    if (autoSave && sessionActions?.saveReceiptData) {
+      const result = sessionActions.saveReceiptData(receiptData, receiptId);
+      if (result && typeof result.catch === 'function') {
+        result.catch((error: any) => {
+          console.error('Failed to save receipt data:', error);
+        });
+      }
+    }
   }, [sessionActions]);
 
   const assignItem = useCallback((itemIndex: number, personId: string) => {
@@ -133,17 +140,30 @@ export const useBillSplitter = (sessionActions?: {
       ...prev,
       splitResults: results,
     }));
-    sessionActions?.saveSplitResults(results);
+    if (sessionActions?.saveSplitResults) {
+      const result = sessionActions.saveSplitResults(results);
+      if (result && typeof result.catch === 'function') {
+        result.catch((error: any) => {
+          console.error('Failed to save split results:', error);
+        });
+      }
+    }
   }, [sessionActions]);
 
   const nextStep = useCallback(() => {
+    console.log('[useBillSplitter] nextStep called!');
+    console.trace('[useBillSplitter] nextStep call stack:');
     setState(prev => {
       const newStep = Math.min(prev.currentStep + 1, 5);
-      try {
-        sessionActions?.saveStep?.(newStep);
-      } catch (error) {
-        console.error('Failed to save step:', error);
-      }
+      console.log(`[useBillSplitter] Advancing from step ${prev.currentStep} to ${newStep}`);
+      
+      // TEMPORARILY DISABLED: Don't save step to session to prevent redundant DB calls
+      // try {
+      //   sessionActions?.saveStep?.(newStep);
+      // } catch (error) {
+      //   console.error('Failed to save step:', error);
+      // }
+      
       return {
         ...prev,
         currentStep: newStep,

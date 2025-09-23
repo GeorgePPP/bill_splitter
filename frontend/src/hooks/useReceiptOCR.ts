@@ -87,8 +87,11 @@ export const useReceiptOCR = () => {
         isProcessing: false,
         processedData: response.processed_data || null,
         extractedData: response.processed_data || null,
-        needsValidation: false,
+        needsValidation: true, // Always show validation modal
+        validationError: null, // Clear any previous validation errors for successful processing
       }));
+      
+      console.log('[useReceiptOCR] Successfully processed receipt, set needsValidation=true');
 
       return response;
     } catch (error) {
@@ -145,7 +148,8 @@ export const useReceiptOCR = () => {
         isProcessing: false,
         processedData: response.processed_data || null,
         extractedData: response.processed_data || null,
-        needsValidation: false,
+        needsValidation: true, // Always show validation modal
+        validationError: null, // Clear any previous validation errors for successful processing
       }));
 
       return response;

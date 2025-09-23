@@ -41,13 +41,19 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
   React.useEffect(() => {
     console.log('[ReceiptUploader] Validation state changed:', {
       needsValidation,
-      extractedData,
-      preview,
-      validationError
+      extractedData: !!extractedData,
+      preview: !!preview,
+      validationError: !!validationError,
+      shouldShowValidationModal
     });
     
     if (needsValidation && extractedData && preview) {
+      console.log('[ReceiptUploader] Setting shouldShowValidationModal to true');
       setShouldShowValidationModal(true);
+    } else if (!needsValidation) {
+      console.log('[ReceiptUploader] Setting shouldShowValidationModal to false');
+      // Close modal when validation is no longer needed (e.g., step changed)
+      setShouldShowValidationModal(false);
     }
   }, [needsValidation, extractedData, preview]);
 
@@ -219,7 +225,7 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
       {/* Validation Modal */}
       {needsValidation && extractedData && preview && (
         <ReceiptValidationModal
-          isOpen={needsValidation}
+          isOpen={shouldShowValidationModal}
           onClose={() => {}}
           imageUrl={preview}
           extractedData={extractedData}

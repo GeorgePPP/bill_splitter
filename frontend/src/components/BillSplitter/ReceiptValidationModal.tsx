@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { X, Plus, Trash2, ZoomIn, ZoomOut, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/UI/Button';
 import { Card } from '@/components/UI/Card';
 
@@ -121,7 +121,21 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
       <div className="bg-white rounded-lg w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Review & Edit Receipt</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold">Review & Edit Receipt</h2>
+            {/* Validation Status Indicator */}
+            {validationErrors ? (
+              <div className="flex items-center gap-2 px-3 py-1 bg-red-50 border border-red-200 rounded-full">
+                <AlertCircle className="h-4 w-4 text-red-500" />
+                <span className="text-sm text-red-700 font-medium">Validation Failed</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-1 bg-green-50 border border-green-200 rounded-full">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                <span className="text-sm text-green-700 font-medium">Validation Passed</span>
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="h-6 w-6" />
           </button>
@@ -130,8 +144,23 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
         {/* Error Display */}
         {validationErrors && (
           <div className="mx-6 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700 font-medium">Validation Error:</p>
-            <p className="text-sm text-red-600 mt-1">{getErrorMessage()}</p>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="h-5 w-5 text-red-500" />
+              <p className="text-sm text-red-700 font-medium">Validation Issues Found:</p>
+            </div>
+            <p className="text-sm text-red-600">{getErrorMessage()}</p>
+            <p className="text-xs text-red-500 mt-2">Please review and correct the extracted data below before proceeding.</p>
+          </div>
+        )}
+
+        {/* Success Display */}
+        {!validationErrors && (
+          <div className="mx-6 mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <p className="text-sm text-green-700 font-medium">Receipt Data Extracted Successfully!</p>
+            </div>
+            <p className="text-sm text-green-600">The receipt data has been automatically extracted and validated. Please review the details below and make any necessary adjustments before proceeding.</p>
           </div>
         )}
 
@@ -283,7 +312,9 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t flex justify-end gap-3">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button onClick={handleValidate} type="button">Validate</Button>
+          <Button onClick={handleValidate} type="button">
+            {validationErrors ? 'Fix & Validate' : 'Confirm & Continue'}
+          </Button>
         </div>
       </div>
     </div>
