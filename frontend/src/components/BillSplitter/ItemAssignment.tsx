@@ -22,7 +22,7 @@ export interface ItemAssignmentProps {
   participants: Person[];
   assignments: ItemAssignmentType[];
   onAssignItem: (itemIndex: number, personId: string) => { requiresConfirmation: boolean; duplicateInfo: DuplicateAssignmentInfo | null; requiresSplitChoice?: boolean } | void;
-  onAssignItemToMultiplePeople: (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => void;
+  onAssignItemToMultiplePeople: (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => void;
   onConfirmAssignment: () => void;
   onCancelAssignment: () => void;
   onUnassignItem: (itemIndex: number) => void;
@@ -63,9 +63,10 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
   const totalCount = assignments.length;
   const allAssigned = assignedCount === totalCount;
 
-  const handleMultipleAssign = (itemIndex: number, personIds: string[]) => {
-    // Open the split choice modal directly
-    onAssignItemToMultiplePeople(itemIndex, personIds, 'equal'); // This will trigger the split modal
+  const handleMultipleAssign = (itemIndex: number, personIds: string[], forceCustomSplit?: boolean) => {
+    // If forceCustomSplit is true, open the split choice modal
+    // Otherwise, assign with equal split by default
+    onAssignItemToMultiplePeople(itemIndex, personIds, 'equal', undefined, forceCustomSplit);
   };
 
   // Generate confirmation modal content

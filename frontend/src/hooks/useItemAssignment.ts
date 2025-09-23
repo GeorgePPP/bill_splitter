@@ -157,7 +157,7 @@ export const useItemAssignment = (sessionActions?: {
     return { requiresConfirmation: false, duplicateInfo: null };
   }, [checkForDuplicateAssignment, state.assignments, sessionActions, convertToSessionFormat]);
 
-  const assignItemToMultiplePeople = useCallback((itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => {
+  const assignItemToMultiplePeople = useCallback((itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal' = 'equal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => {
     const assignment = state.assignments[itemIndex];
     if (!assignment) return;
 
@@ -181,8 +181,8 @@ export const useItemAssignment = (sessionActions?: {
       return;
     }
 
-    // If we don't have custom splits and splitType is 'equal', open the modal for user to choose
-    if (!customSplits) {
+    // If forceCustomSplit is true, always open the modal for user to choose
+    if (forceCustomSplit || (!customSplits && splitType === 'unequal')) {
       setState(prev => ({
         ...prev,
         pendingSplitModal: {
@@ -196,7 +196,11 @@ export const useItemAssignment = (sessionActions?: {
 
     let splits: ItemSplit[];
 
-    if (splitType === 'equal') {
+    if (customSplits) {
+      // Use provided custom splits
+      splits = customSplits;
+    } else {
+      // Default to equal split
       const equalAmount = assignment.item.total_price / personIds.length;
       const equalPercentage = 100 / personIds.length;
       
@@ -213,8 +217,6 @@ export const useItemAssignment = (sessionActions?: {
         splits[0].amount += difference;
         splits[0].amount = Math.round(splits[0].amount * 100) / 100;
       }
-    } else {
-      splits = customSplits || [];
     }
 
     setState(prev => ({

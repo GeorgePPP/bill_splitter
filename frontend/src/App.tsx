@@ -215,8 +215,8 @@ const App: React.FC = () => {
     return itemAssignment.actions.assignItem(itemIndex, personId, billSplitter.state.participants);
   };
 
-  const handleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[]) => {
-    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, splitType, customSplits);
+  const handleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => {
+    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, splitType, customSplits, forceCustomSplit);
   };
 
   const handleConfirmAssignment = () => {
