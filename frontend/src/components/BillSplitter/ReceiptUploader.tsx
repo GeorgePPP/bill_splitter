@@ -6,7 +6,6 @@ import { Loader } from '@/components/UI/Loader';
 import { Upload, FileImage, AlertCircle, CheckCircle } from 'lucide-react';
 import { validateFile } from '@/utils/fileHelpers';
 import { formatFileSize } from '@/utils/formatters';
-import { ReceiptValidationModal } from './ReceiptValidationModal';
 
 export interface ReceiptUploaderProps {
   onReceiptUploaded: (file: File) => void;
@@ -24,38 +23,17 @@ export interface ReceiptUploaderProps {
 export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
   onReceiptUploaded,
   onReceiptProcessed,
-  onValidationCorrection,
+  onValidationCorrection: _onValidationCorrection,
   isLoading = false,
   uploadProgress = 0,
   error = null,
-  validationError = null,
-  needsValidation = false,
-  extractedData = null,
+  validationError: _validationError = null,
+  needsValidation: _needsValidation = false,
+  extractedData: _extractedData = null,
   disabled = false,
 }) => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [shouldShowValidationModal, setShouldShowValidationModal] = useState(false);
-
-  // Update modal visibility when needsValidation changes
-  React.useEffect(() => {
-    console.log('[ReceiptUploader] Validation state changed:', {
-      needsValidation,
-      extractedData: !!extractedData,
-      preview: !!preview,
-      validationError: !!validationError,
-      shouldShowValidationModal
-    });
-    
-    if (needsValidation && extractedData && preview) {
-      console.log('[ReceiptUploader] Setting shouldShowValidationModal to true');
-      setShouldShowValidationModal(true);
-    } else if (!needsValidation) {
-      console.log('[ReceiptUploader] Setting shouldShowValidationModal to false');
-      // Close modal when validation is no longer needed (e.g., step changed)
-      setShouldShowValidationModal(false);
-    }
-  }, [needsValidation, extractedData, preview]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -221,18 +199,6 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
           </div>
         </CardContent>
       </Card>
-
-      {/* Validation Modal */}
-      {needsValidation && extractedData && preview && (
-        <ReceiptValidationModal
-          isOpen={shouldShowValidationModal}
-          onClose={() => {}}
-          imageUrl={preview}
-          extractedData={extractedData}
-          validationErrors={validationError}
-          onValidate={onValidationCorrection}
-        />
-      )}
     </>
   );
 };

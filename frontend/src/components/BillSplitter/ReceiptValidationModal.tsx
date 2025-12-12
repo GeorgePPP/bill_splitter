@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Plus, Trash2, ZoomIn, ZoomOut, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/UI/Button';
 import { Card } from '@/components/UI/Card';
@@ -53,13 +53,100 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
   validationErrors,
   onValidate,
 }) => {
-  const [items, setItems] = useState<BillItem[]>(extractedData.items || []);
-  const [taxes, setTaxes] = useState<TaxOrCharge[]>(extractedData.taxes_or_charges || []);
-  const [subtotal, setSubtotal] = useState(extractedData.subtotal || 0);
-  const [grandTotal, setGrandTotal] = useState(extractedData.grand_total || 0);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const imageContainerRef = useRef<HTMLDivElement | null>(null);
+  const didInitViewRef = useRef(false);
+  const panRef = useRef<{
+    isPanning: boolean;
+    startX: number;
+    startY: number;
+    panX: number;
+    panY: number;
+  }>({
+    isPanning: false,
+    startX: 0,
+    startY: 0,
+    panX: 0,
+    panY: 0,
+  });
+
+  const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+  const clampPan = (candidatePan: { x: number; y: number }, nextZoom: number) => {
+    const scaledWidth = imageSize.width * nextZoom;
+    const scaledHeight = imageSize.height * nextZoom;
+
+    const maxX = Math.max(0, (scaledWidth - containerSize.width) / 2);
+    const maxY = Math.max(0, (scaledHeight - containerSize.height) / 2);
+
+    return {
+      x: clamp(candidatePan.x, -maxX, maxX),
+      y: clamp(candidatePan.y, -maxY, maxY),
+    };
+  };
+
+  const normalizeItem = (item: BillItem): BillItem => {
+    const quantity = Number.isFinite(item.quantity) ? item.quantity : 0;
+    const unit_price = Number.isFinite(item.unit_price) ? item.unit_price : 0;
+    return {
+      ...item,
+      quantity,
+      unit_price,
+      total_price: roundMoney(quantity * unit_price),
+    };
+  };
+
+  const [items, setItems] = useState<BillItem[]>(() =>
+    (extractedData.items || []).map(normalizeItem)
+  );
+  const [taxes, setTaxes] = useState<TaxOrCharge[]>(() => extractedData.taxes_or_charges || []);
 
   if (!isOpen) return null;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setItems((extractedData.items || []).map(normalizeItem));
+    setTaxes(extractedData.taxes_or_charges || []);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    didInitViewRef.current = false;
+  }, [isOpen, extractedData]);
+
+  useEffect(() => {
+    const container = imageContainerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      setContainerSize({ width, height });
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (didInitViewRef.current) return;
+    if (containerSize.width <= 0 || containerSize.height <= 0) return;
+    if (imageSize.width <= 0 || imageSize.height <= 0) return;
+
+    const fitZoom = Math.min(
+      1,
+      containerSize.width / imageSize.width,
+      containerSize.height / imageSize.height
+    );
+
+    didInitViewRef.current = true;
+    setZoom(fitZoom);
+    setPan({ x: 0, y: 0 });
+  }, [isOpen, containerSize, imageSize]);
 
   const handleAddItem = () => {
     setItems([...items, { name: '', quantity: 1, unit_price: 0, total_price: 0 }]);
@@ -70,9 +157,23 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
   };
 
   const handleItemChange = (index: number, field: keyof BillItem, value: any) => {
-    const updated = [...items];
-    updated[index] = { ...updated[index], [field]: value };
-    setItems(updated);
+    if (field === 'total_price') return; // computed
+
+    setItems(prev => {
+      const updated = [...prev];
+      const current = updated[index];
+      if (!current) return prev;
+
+      const next: BillItem = { ...current, [field]: value };
+      if (field === 'quantity' || field === 'unit_price') {
+        const quantity = Number.isFinite(next.quantity) ? next.quantity : 0;
+        const unit_price = Number.isFinite(next.unit_price) ? next.unit_price : 0;
+        next.total_price = roundMoney(quantity * unit_price);
+      }
+
+      updated[index] = next;
+      return updated;
+    });
   };
 
   const handleTaxChange = (index: number, field: keyof TaxOrCharge, value: any) => {
@@ -81,13 +182,33 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
     setTaxes(updated);
   };
 
+  const handleAddTax = () => {
+    setTaxes(prev => [...prev, { name: '', amount: 0 }]);
+  };
+
+  const handleDeleteTax = (index: number) => {
+    setTaxes(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const subtotal = useMemo(() => roundMoney(items.reduce((sum, item) => sum + (item.total_price || 0), 0)), [items]);
+  const taxesAndChargesTotal = useMemo(() => {
+    const total = taxes.reduce((sum, tax) => {
+      const amount = Number.isFinite(tax.amount) && tax.amount !== 0
+        ? tax.amount
+        : roundMoney(((tax.percent || 0) / 100) * subtotal);
+      return sum + (amount || 0);
+    }, 0);
+    return roundMoney(total);
+  }, [taxes, subtotal]);
+  const total = useMemo(() => roundMoney(subtotal + taxesAndChargesTotal), [subtotal, taxesAndChargesTotal]);
+
   const handleValidate = () => {
     const editedData: ExtractedData = {
       ...extractedData,
       items,
       taxes_or_charges: taxes,
       subtotal,
-      grand_total: grandTotal,
+      grand_total: total,
     };
     onValidate(editedData);
   };
@@ -172,14 +293,22 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
               <span className="text-sm font-medium text-gray-700">Receipt Image</span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setZoom(Math.max(0.5, zoom - 0.25))}
+                  onClick={() => {
+                    const next = clamp(zoom - 0.25, 0.5, 3);
+                    setZoom(next);
+                    setPan(prev => clampPan(prev, next));
+                  }}
                   className="p-1 hover:bg-gray-100 rounded"
                   type="button"
                 >
                   <ZoomOut className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={() => setZoom(Math.min(3, zoom + 0.25))}
+                  onClick={() => {
+                    const next = clamp(zoom + 0.25, 0.5, 3);
+                    setZoom(next);
+                    setPan(prev => clampPan(prev, next));
+                  }}
                   className="p-1 hover:bg-gray-100 rounded"
                   type="button"
                 >
@@ -187,87 +316,159 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-auto bg-gray-50 rounded">
-              <img
-                src={imageUrl}
-                alt="Receipt"
-                style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}
-                className="max-w-none"
-              />
+            <div
+              ref={imageContainerRef}
+              className="flex-1 overflow-hidden bg-gray-50 rounded cursor-grab active:cursor-grabbing select-none"
+              style={{ overscrollBehavior: 'contain' }}
+              onWheel={(e) => {
+                e.preventDefault();
+                const container = imageContainerRef.current;
+                if (!container) return;
+                if (containerSize.width <= 0 || containerSize.height <= 0) return;
+
+                const rect = container.getBoundingClientRect();
+                const cursorX = e.clientX - rect.left;
+                const cursorY = e.clientY - rect.top;
+                const cursorOffsetX = cursorX - containerSize.width / 2;
+                const cursorOffsetY = cursorY - containerSize.height / 2;
+
+                const nextZoom = clamp(zoom + (e.deltaY < 0 ? 0.15 : -0.15), 0.5, 3);
+
+                // Keep the point under the cursor stable when zooming
+                const pointX = (cursorOffsetX - pan.x) / zoom;
+                const pointY = (cursorOffsetY - pan.y) / zoom;
+                const nextPan = {
+                  x: cursorOffsetX - nextZoom * pointX,
+                  y: cursorOffsetY - nextZoom * pointY,
+                };
+
+                setZoom(nextZoom);
+                setPan(clampPan(nextPan, nextZoom));
+              }}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                panRef.current.isPanning = true;
+                panRef.current.startX = e.clientX;
+                panRef.current.startY = e.clientY;
+                panRef.current.panX = pan.x;
+                panRef.current.panY = pan.y;
+              }}
+              onMouseMove={(e) => {
+                if (!panRef.current.isPanning) return;
+                const dx = e.clientX - panRef.current.startX;
+                const dy = e.clientY - panRef.current.startY;
+                const candidate = { x: panRef.current.panX + dx, y: panRef.current.panY + dy };
+                setPan(clampPan(candidate, zoom));
+              }}
+              onMouseUp={() => {
+                panRef.current.isPanning = false;
+              }}
+              onMouseLeave={() => {
+                panRef.current.isPanning = false;
+              }}
+            >
+              <div className="w-full h-full flex items-center justify-center">
+                <img
+                  src={imageUrl}
+                  alt="Receipt"
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+                  }}
+                  style={{
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="max-w-none max-h-none"
+                  draggable={false}
+                />
+              </div>
             </div>
           </div>
 
           {/* Right Panel - Editable Fields */}
-          <div className="w-1/2 p-4 overflow-auto">
+          <div className="w-1/2 p-5 overflow-auto bg-white">
             {/* Items Section */}
-            <div className="mb-6">
+            <div className="mb-7">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-gray-900">Items</h3>
                 <Button size="sm" variant="outline" onClick={handleAddItem} type="button">
                   <Plus className="h-4 w-4 mr-1" /> Add Item
                 </Button>
               </div>
+              <div className="grid grid-cols-12 gap-2 px-2 py-2 mb-2 text-[10px] uppercase tracking-wide text-gray-500 bg-white border border-gray-200 rounded-md">
+                <div className="col-span-6">Item</div>
+                <div className="col-span-2 text-right">Qty</div>
+                <div className="col-span-2 text-right">Unit</div>
+                <div className="col-span-2 text-right">Total</div>
+              </div>
               <div className="space-y-2">
                 {items.map((item, index) => (
-                  <Card key={index} className="p-3">
-                    <div className="flex gap-2 mb-2">
-                      <input
-                        type="text"
-                        value={item.name}
-                        onChange={(e) => handleItemChange(index, 'name', e.target.value)}
-                        placeholder="Item name"
-                        className="flex-1 px-2 py-1 border rounded text-sm"
-                      />
-                      <button
-                        onClick={() => handleDeleteItem(index)}
-                        className="p-1 text-red-500 hover:bg-red-50 rounded"
-                        type="button"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
-                        placeholder="Qty"
-                        className="px-2 py-1 border rounded text-sm"
-                      />
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={item.unit_price}
-                        onChange={(e) => handleItemChange(index, 'unit_price', parseFloat(e.target.value) || 0)}
-                        placeholder="Unit Price"
-                        className="px-2 py-1 border rounded text-sm"
-                      />
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={item.total_price}
-                        onChange={(e) => handleItemChange(index, 'total_price', parseFloat(e.target.value) || 0)}
-                        placeholder="Total"
-                        className="px-2 py-1 border rounded text-sm"
-                      />
-                    </div>
-                  </Card>
+                  <div
+                    key={index}
+                    className="relative grid grid-cols-12 gap-2 p-2 pr-10 bg-white border border-gray-200 rounded-md"
+                  >
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+                      placeholder="Item name"
+                      className="col-span-6 h-9 px-2 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <input
+                      type="number"
+                      value={item.quantity}
+                      onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
+                      placeholder="Qty"
+                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={item.unit_price}
+                      onChange={(e) => handleItemChange(index, 'unit_price', parseFloat(e.target.value) || 0)}
+                      placeholder="Unit"
+                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={item.total_price}
+                      readOnly
+                      tabIndex={-1}
+                      aria-readonly="true"
+                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right bg-gray-50 text-gray-700 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
+                    />
+                    <button
+                      onClick={() => handleDeleteItem(index)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:bg-red-50 rounded"
+                      type="button"
+                      aria-label="Delete item"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
 
             {/* Taxes Section */}
-            <div className="mb-6 pb-6 border-b">
-              <h3 className="font-semibold text-gray-900 mb-3">Taxes & Charges</h3>
+            <div className="mb-7 pb-7 border-b">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900">Taxes & Charges</h3>
+                <Button size="sm" variant="outline" onClick={handleAddTax} type="button">
+                  <Plus className="h-4 w-4 mr-1" /> Add Tax/Charge
+                </Button>
+              </div>
               <div className="space-y-2">
                 {taxes.map((tax, index) => (
-                  <div key={index} className="flex gap-2">
+                  <div key={index} className="flex gap-2 items-center">
                     <input
                       type="text"
                       value={tax.name}
                       onChange={(e) => handleTaxChange(index, 'name', e.target.value)}
                       placeholder="Tax/Charge name"
-                      className="flex-1 px-2 py-1 border rounded text-sm"
+                      className="flex-1 px-2 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     />
                     <input
                       type="number"
@@ -275,8 +476,16 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                       value={tax.amount}
                       onChange={(e) => handleTaxChange(index, 'amount', parseFloat(e.target.value) || 0)}
                       placeholder="Amount"
-                      className="w-24 px-2 py-1 border rounded text-sm"
+                      className="w-28 px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     />
+                    <button
+                      onClick={() => handleDeleteTax(index)}
+                      className="p-1 text-red-500 hover:bg-red-50 rounded"
+                      type="button"
+                      aria-label="Delete tax or charge"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -286,24 +495,10 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
             <div className="space-y-3">
               <h3 className="font-semibold text-gray-900">Totals</h3>
               <div className="flex justify-between items-center">
-                <label className="text-sm text-gray-600">Subtotal</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={subtotal}
-                  onChange={(e) => setSubtotal(parseFloat(e.target.value) || 0)}
-                  className="w-32 px-2 py-1 border rounded text-sm"
-                />
-              </div>
-              <div className="flex justify-between items-center">
-                <label className="text-sm font-medium text-gray-900">Grand Total</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={grandTotal}
-                  onChange={(e) => setGrandTotal(parseFloat(e.target.value) || 0)}
-                  className="w-32 px-2 py-1 border rounded text-sm font-medium"
-                />
+                <label className="text-sm font-medium text-gray-900">Total</label>
+                <div className="w-36 px-3 py-2 border rounded-md text-sm font-semibold text-right bg-primary-50 border-primary-200 text-primary-800">
+                  {total.toFixed(2)}
+                </div>
               </div>
             </div>
           </div>

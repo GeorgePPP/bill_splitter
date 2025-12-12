@@ -14,6 +14,7 @@ import { useCalculations } from '@/hooks/useCalculations';
 import { useSession } from '@/hooks/useSession';
 import { useValidationModal } from '@/hooks/useValidationModal';
 import { ReceiptValidationModal } from '@/components/BillSplitter/ReceiptValidationModal';
+import { ApiError } from '@/types/api.types';
 
 const App: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -166,39 +167,61 @@ const App: React.FC = () => {
       session.actions.saveReceiptData(correctedData, receiptId);
 
       // Check if this is the initial validation (no changes made) or reprocessing
-      const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
+      const baseExtractedData = validationModal.state.extractedData ?? receiptOCR.state.extractedData;
+      const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(baseExtractedData);
 
       if (hasChanges) {
         // User made changes, validate with corrected data (no receiptId needed)
         const processResponse = await receiptOCR.actions.validateCorrectedData(correctedData);
 
-        if (processResponse.processed_data) {
-          billSplitter.actions.setReceiptData(processResponse.processed_data, receiptId, false);
-          itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
-
-          // Mark as validated in global state
-          validationModal.actions.markAsValidated(processResponse.processed_data);
-          validationModal.actions.closeModal();
-
-          // Always go to assignment page (step 3) after validation
-          billSplitter.actions.goToStep(3);
+        if (!processResponse.processed_data) {
+          billSplitter.actions.setError('Validation succeeded but no receipt data was returned. Please try again.');
+          return;
         }
+
+        billSplitter.actions.setReceiptData(processResponse.processed_data, receiptId, false);
+        itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+
+        // Mark as validated in global state
+        validationModal.actions.markAsValidated(processResponse.processed_data);
+        validationModal.actions.closeModal();
+
+        // Always go to assignment page (step 3) after validation
+        billSplitter.actions.goToStep(3);
       } else {
         // No changes made, just proceed with existing data
-        if (receiptOCR.state.processedData) {
-          billSplitter.actions.setReceiptData(receiptOCR.state.processedData, receiptId, false);
-          itemAssignment.actions.initializeAssignments(receiptOCR.state.processedData.items);
-
-          // Mark as validated in global state
-          validationModal.actions.markAsValidated(receiptOCR.state.processedData);
-          validationModal.actions.closeModal();
-
-          // Always go to assignment page (step 3) after validation
-          billSplitter.actions.goToStep(3);
+        const processed = receiptOCR.state.processedData ?? validationModal.state.extractedData;
+        if (!processed) {
+          billSplitter.actions.setError('No receipt data available to continue. Please reprocess the receipt.');
+          return;
         }
+
+        billSplitter.actions.setReceiptData(processed, receiptId, false);
+        itemAssignment.actions.initializeAssignments(processed.items);
+
+        // Mark as validated in global state
+        validationModal.actions.markAsValidated(processed);
+        validationModal.actions.closeModal();
+
+        // Always go to assignment page (step 3) after validation
+        billSplitter.actions.goToStep(3);
       }
     } catch (error) {
       console.error('[App] Error validating receipt:', error);
+      const apiError = error as ApiError;
+      if (apiError.status === 422) {
+        const errorDetails = apiError.details?.detail || apiError.details;
+        if (validationModal.state.imageUrl) {
+          validationModal.actions.openModal(
+            validationModal.state.imageUrl,
+            correctedData,
+            errorDetails || apiError.message,
+            receiptOCR.state.rawText || validationModal.state.ocrText
+          );
+          return;
+        }
+      }
+
       billSplitter.actions.setError('Failed to validate receipt. Please try again.');
     } finally {
       billSplitter.actions.setLoading(false);
@@ -311,7 +334,7 @@ const App: React.FC = () => {
         return (
           <ReceiptUploader
             onReceiptUploaded={handleReceiptUpload}
-            onReceiptProcessed={handleReceiptProcessed}
+            onReceiptProcessed={(receiptData) => handleReceiptProcessed(receiptData, `receipt-${Date.now()}`)}
             onValidationCorrection={handleValidationCorrection}
             isLoading={receiptOCR.state.isUploading || receiptOCR.state.isProcessing}
             uploadProgress={receiptOCR.state.uploadProgress}
@@ -428,7 +451,7 @@ const App: React.FC = () => {
       {validationModal.state.isOpen && validationModal.state.imageUrl && validationModal.state.extractedData && (
         <ReceiptValidationModal
           isOpen={validationModal.state.isOpen}
-          onClose={() => {}}
+          onClose={validationModal.actions.closeModal}
           imageUrl={validationModal.state.imageUrl}
           extractedData={validationModal.state.extractedData}
           validationErrors={validationModal.state.validationErrors}
