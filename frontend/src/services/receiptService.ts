@@ -1,5 +1,5 @@
 import apiClient from './api';
-import { ReceiptUploadResponse, ReceiptProcessResponse, ReceiptData } from '@/types/bill.types';
+import { ReceiptProcessResponse } from '@/types/bill.types';
 
 export class ReceiptService {
   /**

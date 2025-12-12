@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { ConfirmationModal } from '@/components/UI/ConfirmationModal';
 import { SplitChoiceModal } from '@/components/UI/SplitChoiceModal';
 import { BillItemCard } from './BillItemCard';
-import { BillItem } from '@/types/bill.types';
 import { Person } from '@/types/person.types';
 import { ItemAssignment as ItemAssignmentType, ItemSplit } from '@/hooks/useItemAssignment';
 import { ShoppingCart, CheckCircle, AlertCircle } from 'lucide-react';
@@ -18,15 +17,12 @@ interface DuplicateAssignmentInfo {
 }
 
 export interface ItemAssignmentProps {
-  items: BillItem[];
   participants: Person[];
   assignments: ItemAssignmentType[];
-  onAssignItem: (itemIndex: number, personId: string) => { requiresConfirmation: boolean; duplicateInfo: DuplicateAssignmentInfo | null; requiresSplitChoice?: boolean } | void;
   onAssignItemToMultiplePeople: (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => void;
   onConfirmAssignment: () => void;
   onCancelAssignment: () => void;
   onUnassignItem: (itemIndex: number) => void;
-  onRemovePersonFromSplit: (itemIndex: number, personId: string) => void;
   onCloseSplitModal: () => void;
   onNext: () => void;
   onBack: () => void;
@@ -43,15 +39,12 @@ export interface ItemAssignmentProps {
 }
 
 export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
-  items,
   participants,
   assignments,
-  onAssignItem,
   onAssignItemToMultiplePeople,
   onConfirmAssignment,
   onCancelAssignment,
   onUnassignItem,
-  onRemovePersonFromSplit,
   onCloseSplitModal,
   onNext,
   onBack,
@@ -118,13 +111,13 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
 
   return (
     <>
-      <Card className="max-w-4xl mx-auto">
-        <CardHeader className="text-center">
-          <div className="mx-auto w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mb-4">
-            <ShoppingCart className="h-8 w-8 text-primary-600" />
+      <Card className="max-w-4xl mx-0 md:mx-auto w-full overflow-x-hidden rounded-none md:rounded-lg">
+        <CardHeader className="text-center px-4 py-4 md:px-6 md:py-6">
+          <div className="mx-auto w-12 h-12 md:w-16 md:h-16 bg-primary-100 rounded-full flex items-center justify-center mb-3 md:mb-4">
+            <ShoppingCart className="h-6 w-6 md:h-8 md:w-8 text-primary-600" />
           </div>
-          <CardTitle>Assign Items to People</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-lg md:text-xl">Assign Items to People</CardTitle>
+          <CardDescription className="text-sm">
             Click on a person's name to assign each item. Click additional people to split an item.
           </CardDescription>
           
@@ -135,14 +128,14 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
               ) : (
                 <AlertCircle className="h-5 w-5 text-yellow-500" />
               )}
-              <span className="text-sm font-medium">
+              <span className="text-xs md:text-sm font-medium">
                 {assignedCount} of {totalCount} items assigned
               </span>
             </div>
           </div>
         </CardHeader>
         
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-4 md:space-y-6 px-3 pb-4 md:px-6 md:pb-6 overflow-x-hidden">
           <div className="grid gap-4">
             {assignments.map((assignment, index) => (
               <BillItemCard
@@ -151,9 +144,7 @@ export const ItemAssignment: React.FC<ItemAssignmentProps> = ({
                 index={index}
                 assignment={assignment}
                 participants={participants}
-                onAssign={onAssignItem}
                 onUnassign={onUnassignItem}
-                onRemovePersonFromSplit={onRemovePersonFromSplit}
                 onMultipleAssign={handleMultipleAssign}
                 disabled={disabled}
               />

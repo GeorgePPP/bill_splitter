@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Plus, Trash2, ZoomIn, ZoomOut, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Plus, Trash2, ZoomIn, ZoomOut, CheckCircle, AlertCircle, GripVertical } from 'lucide-react';
+import { DndContext, DragOverlay, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/UI/Button';
-import { Card } from '@/components/UI/Card';
 
 interface BillItem {
+  __id?: string;
   name: string;
   quantity: number;
   unit_price: number;
@@ -54,11 +57,31 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
   onValidate,
 }) => {
   const [zoom, setZoom] = useState(1);
+  const [minZoom, setMinZoom] = useState(0.5);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const editorScrollRef = useRef<HTMLDivElement | null>(null);
+  const itemRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const itemNameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const taxRowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const taxNameInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const [lastAddedItemId, setLastAddedItemId] = useState<string | null>(null);
+  const [lastAddedTaxIndex, setLastAddedTaxIndex] = useState<number | null>(null);
   const imageContainerRef = useRef<HTMLDivElement | null>(null);
   const didInitViewRef = useRef(false);
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    isPinching: boolean;
+    startDist: number;
+    startZoom: number;
+    point: { x: number; y: number };
+  }>({
+    isPinching: false,
+    startDist: 0,
+    startZoom: 1,
+    point: { x: 0, y: 0 },
+  });
   const panRef = useRef<{
     isPanning: boolean;
     startX: number;
@@ -73,8 +96,29 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
     panY: 0,
   });
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
+  );
+
   const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+  const makeId = () => {
+    // Avoid importing deps; good enough for client-side stable keys.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cryptoAny = (globalThis as any).crypto as Crypto | undefined;
+    if (cryptoAny?.randomUUID) return cryptoAny.randomUUID();
+    return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+  const getDistance = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+  const getMidpoint = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  });
 
   const clampPan = (candidatePan: { x: number; y: number }, nextZoom: number) => {
     const scaledWidth = imageSize.width * nextZoom;
@@ -93,6 +137,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
     const quantity = Number.isFinite(item.quantity) ? item.quantity : 0;
     const unit_price = Number.isFinite(item.unit_price) ? item.unit_price : 0;
     return {
+      __id: item.__id ?? makeId(),
       ...item,
       quantity,
       unit_price,
@@ -112,8 +157,16 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
     setItems((extractedData.items || []).map(normalizeItem));
     setTaxes(extractedData.taxes_or_charges || []);
     setZoom(1);
+    setMinZoom(0.5);
     setPan({ x: 0, y: 0 });
     didInitViewRef.current = false;
+    setLastAddedItemId(null);
+    setLastAddedTaxIndex(null);
+    itemRowRefs.current = {};
+    itemNameInputRefs.current = {};
+    pointersRef.current.clear();
+    pinchRef.current.isPinching = false;
+    panRef.current.isPanning = false;
   }, [isOpen, extractedData]);
 
   useEffect(() => {
@@ -144,12 +197,17 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
     );
 
     didInitViewRef.current = true;
+    setMinZoom(fitZoom);
     setZoom(fitZoom);
     setPan({ x: 0, y: 0 });
   }, [isOpen, containerSize, imageSize]);
 
   const handleAddItem = () => {
-    setItems([...items, { name: '', quantity: 1, unit_price: 0, total_price: 0 }]);
+    setItems((prev) => {
+      const nextId = makeId();
+      setLastAddedItemId(nextId);
+      return [...prev, { __id: nextId, name: '', quantity: 1, unit_price: 0, total_price: 0 }];
+    });
   };
 
   const handleDeleteItem = (index: number) => {
@@ -183,7 +241,150 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
   };
 
   const handleAddTax = () => {
-    setTaxes(prev => [...prev, { name: '', amount: 0 }]);
+    setTaxes((prev) => {
+      const nextIndex = prev.length;
+      setLastAddedTaxIndex(nextIndex);
+      return [...prev, { name: '', amount: 0 }];
+    });
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!lastAddedItemId) return;
+    const row = itemRowRefs.current[lastAddedItemId];
+    if (!row) return;
+
+    requestAnimationFrame(() => {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const input = itemNameInputRefs.current[lastAddedItemId];
+      input?.focus();
+      setLastAddedItemId(null);
+    });
+  }, [isOpen, lastAddedItemId, items.length]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (lastAddedTaxIndex === null) return;
+    const row = taxRowRefs.current[lastAddedTaxIndex];
+    if (!row) return;
+
+    requestAnimationFrame(() => {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const input = taxNameInputRefs.current[lastAddedTaxIndex];
+      input?.focus();
+      setLastAddedTaxIndex(null);
+    });
+  }, [isOpen, lastAddedTaxIndex, taxes.length]);
+
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const activeDragItem = useMemo(() => {
+    if (!activeDragId) return null;
+    return items.find((item) => item.__id === activeDragId) ?? null;
+  }, [activeDragId, items]);
+
+  const handleDragEnd = (event: { active: { id: any }; over: { id: any } | null }) => {
+    const { active, over } = event;
+    setActiveDragId(null);
+    if (!over) return;
+    if (active.id === over.id) return;
+
+    setItems((prev) => {
+      const oldIndex = prev.findIndex((item) => item.__id === active.id);
+      const newIndex = prev.findIndex((item) => item.__id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
+  };
+
+  const SortableItemRow: React.FC<{
+    item: BillItem;
+    index: number;
+  }> = ({ item, index }) => {
+    const id = item.__id ?? `${index}`;
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      setActivatorNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id });
+
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      zIndex: isDragging ? 20 : undefined,
+    };
+
+    return (
+      <div
+        ref={(el) => {
+          setNodeRef(el);
+          if (item.__id) itemRowRefs.current[item.__id] = el;
+        }}
+        style={style}
+        className={[
+          'relative grid grid-cols-12 gap-2 p-2 pr-10 bg-white border border-gray-200 rounded-md',
+          isDragging ? 'shadow-lg ring-2 ring-primary-200' : '',
+        ].join(' ')}
+      >
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="md:hidden absolute left-2 top-2 p-1 text-gray-400 hover:text-gray-600"
+          style={{ touchAction: 'none' }}
+          aria-label="Reorder item"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+
+        <input
+          type="text"
+          value={item.name}
+          onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+          placeholder="Item name"
+          ref={(el) => {
+            if (item.__id) itemNameInputRefs.current[item.__id] = el;
+          }}
+          className="col-span-12 md:col-span-6 h-9 pl-9 md:pl-2 pr-2 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+        <input
+          type="number"
+          value={item.quantity}
+          onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
+          placeholder="Qty"
+          className="col-span-4 md:col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+        <input
+          type="number"
+          step="0.01"
+          value={item.unit_price}
+          onChange={(e) => handleItemChange(index, 'unit_price', parseFloat(e.target.value) || 0)}
+          placeholder="Unit"
+          className="col-span-4 md:col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
+        />
+        <input
+          type="number"
+          step="0.01"
+          value={item.total_price}
+          readOnly
+          tabIndex={-1}
+          aria-readonly="true"
+          className="col-span-4 md:col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right bg-gray-50 text-gray-700 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
+        />
+        <button
+          onClick={() => handleDeleteItem(index)}
+          className="absolute right-2 top-2 md:top-1/2 md:-translate-y-1/2 p-1 text-red-500 hover:bg-red-50 rounded"
+          type="button"
+          aria-label="Delete item"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+    );
   };
 
   const handleDeleteTax = (index: number) => {
@@ -238,22 +439,22 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-0 md:p-4">
+      <div className="bg-white rounded-none md:rounded-lg w-full max-w-none md:max-w-6xl h-screen supports-[height:100dvh]:h-[100dvh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b flex items-center justify-between">
+        <div className="shrink-0 px-3 py-2 md:px-6 md:py-4 border-b flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-semibold">Review & Edit Receipt</h2>
+            <h2 className="text-base md:text-xl font-semibold leading-tight">Review & Edit Receipt</h2>
             {/* Validation Status Indicator */}
             {validationErrors ? (
-              <div className="flex items-center gap-2 px-3 py-1 bg-red-50 border border-red-200 rounded-full">
+              <div className="flex items-center gap-1.5 px-2 py-0.5 md:gap-2 md:px-3 md:py-1 bg-red-50 border border-red-200 rounded-full">
                 <AlertCircle className="h-4 w-4 text-red-500" />
-                <span className="text-sm text-red-700 font-medium">Validation Failed</span>
+                <span className="text-xs md:text-sm text-red-700 font-medium">Validation Failed</span>
               </div>
             ) : (
-              <div className="flex items-center gap-2 px-3 py-1 bg-green-50 border border-green-200 rounded-full">
+              <div className="flex items-center gap-1.5 px-2 py-0.5 md:gap-2 md:px-3 md:py-1 bg-green-50 border border-green-200 rounded-full">
                 <CheckCircle className="h-4 w-4 text-green-500" />
-                <span className="text-sm text-green-700 font-medium">Validation Passed</span>
+                <span className="text-xs md:text-sm text-green-700 font-medium">Validation Passed</span>
               </div>
             )}
           </div>
@@ -264,7 +465,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
 
         {/* Error Display */}
         {validationErrors && (
-          <div className="mx-6 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="hidden md:block mx-6 mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle className="h-5 w-5 text-red-500" />
               <p className="text-sm text-red-700 font-medium">Validation Issues Found:</p>
@@ -276,7 +477,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
 
         {/* Success Display */}
         {!validationErrors && (
-          <div className="mx-6 mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="hidden md:block mx-6 mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
               <CheckCircle className="h-5 w-5 text-green-500" />
               <p className="text-sm text-green-700 font-medium">Receipt Data Extracted Successfully!</p>
@@ -286,15 +487,15 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden flex">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row">
           {/* Left Panel - Image Preview */}
-          <div className="w-1/2 border-r p-4 flex flex-col">
+          <div className="w-full md:w-1/2 min-h-0 border-b md:border-b-0 md:border-r p-3 md:p-4 flex flex-col flex-[2] md:flex-1">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-gray-700">Receipt Image</span>
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    const next = clamp(zoom - 0.25, 0.5, 3);
+                    const next = clamp(zoom - 0.25, minZoom, 3);
                     setZoom(next);
                     setPan(prev => clampPan(prev, next));
                   }}
@@ -305,7 +506,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    const next = clamp(zoom + 0.25, 0.5, 3);
+                    const next = clamp(zoom + 0.25, minZoom, 3);
                     setZoom(next);
                     setPan(prev => clampPan(prev, next));
                   }}
@@ -318,8 +519,8 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
             </div>
             <div
               ref={imageContainerRef}
-              className="flex-1 overflow-hidden bg-gray-50 rounded cursor-grab active:cursor-grabbing select-none"
-              style={{ overscrollBehavior: 'contain' }}
+              className="w-full aspect-square md:aspect-auto md:flex-1 min-h-0 overflow-hidden bg-gray-50 rounded cursor-grab active:cursor-grabbing select-none"
+              style={{ overscrollBehavior: 'contain', touchAction: 'none' }}
               onWheel={(e) => {
                 e.preventDefault();
                 const container = imageContainerRef.current;
@@ -332,7 +533,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                 const cursorOffsetX = cursorX - containerSize.width / 2;
                 const cursorOffsetY = cursorY - containerSize.height / 2;
 
-                const nextZoom = clamp(zoom + (e.deltaY < 0 ? 0.15 : -0.15), 0.5, 3);
+                const nextZoom = clamp(zoom + (e.deltaY < 0 ? 0.15 : -0.15), minZoom, 3);
 
                 // Keep the point under the cursor stable when zooming
                 const pointX = (cursorOffsetX - pan.x) / zoom;
@@ -345,25 +546,100 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                 setZoom(nextZoom);
                 setPan(clampPan(nextPan, nextZoom));
               }}
-              onMouseDown={(e) => {
-                if (e.button !== 0) return;
+              onPointerDown={(e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                // If we have 2 pointers, start pinch zoom.
+                if (pointersRef.current.size === 2) {
+                  const container = imageContainerRef.current;
+                  if (!container) return;
+                  if (containerSize.width <= 0 || containerSize.height <= 0) return;
+
+                  const points = Array.from(pointersRef.current.values());
+                  const p0 = points[0];
+                  const p1 = points[1];
+                  if (!p0 || !p1) return;
+
+                  const rect = container.getBoundingClientRect();
+                  const mid = getMidpoint(p0, p1);
+                  const cursorX = mid.x - rect.left;
+                  const cursorY = mid.y - rect.top;
+                  const cursorOffsetX = cursorX - containerSize.width / 2;
+                  const cursorOffsetY = cursorY - containerSize.height / 2;
+
+                  pinchRef.current.isPinching = true;
+                  pinchRef.current.startDist = Math.max(1, getDistance(p0, p1));
+                  pinchRef.current.startZoom = zoom;
+                  pinchRef.current.point = {
+                    x: (cursorOffsetX - pan.x) / zoom,
+                    y: (cursorOffsetY - pan.y) / zoom,
+                  };
+
+                  panRef.current.isPanning = false;
+                  return;
+                }
+
                 panRef.current.isPanning = true;
                 panRef.current.startX = e.clientX;
                 panRef.current.startY = e.clientY;
                 panRef.current.panX = pan.x;
                 panRef.current.panY = pan.y;
               }}
-              onMouseMove={(e) => {
+              onPointerMove={(e) => {
+                if (pointersRef.current.has(e.pointerId)) {
+                  pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                }
+
+                if (pinchRef.current.isPinching && pointersRef.current.size >= 2) {
+                  const container = imageContainerRef.current;
+                  if (!container) return;
+                  if (containerSize.width <= 0 || containerSize.height <= 0) return;
+
+                  const points = Array.from(pointersRef.current.values());
+                  const p0 = points[0];
+                  const p1 = points[1];
+                  if (!p0 || !p1) return;
+
+                  const rect = container.getBoundingClientRect();
+                  const mid = getMidpoint(p0, p1);
+                  const cursorX = mid.x - rect.left;
+                  const cursorY = mid.y - rect.top;
+                  const cursorOffsetX = cursorX - containerSize.width / 2;
+                  const cursorOffsetY = cursorY - containerSize.height / 2;
+
+                  const currentDist = Math.max(1, getDistance(p0, p1));
+                  const scale = currentDist / Math.max(1, pinchRef.current.startDist);
+                  const nextZoom = clamp(pinchRef.current.startZoom * scale, minZoom, 3);
+                  const nextPan = {
+                    x: cursorOffsetX - nextZoom * pinchRef.current.point.x,
+                    y: cursorOffsetY - nextZoom * pinchRef.current.point.y,
+                  };
+
+                  setZoom(nextZoom);
+                  setPan(clampPan(nextPan, nextZoom));
+                  return;
+                }
+
                 if (!panRef.current.isPanning) return;
                 const dx = e.clientX - panRef.current.startX;
                 const dy = e.clientY - panRef.current.startY;
                 const candidate = { x: panRef.current.panX + dx, y: panRef.current.panY + dy };
                 setPan(clampPan(candidate, zoom));
               }}
-              onMouseUp={() => {
+              onPointerUp={(e) => {
+                pointersRef.current.delete(e.pointerId);
+                if (pointersRef.current.size < 2) {
+                  pinchRef.current.isPinching = false;
+                }
                 panRef.current.isPanning = false;
               }}
-              onMouseLeave={() => {
+              onPointerCancel={(e) => {
+                pointersRef.current.delete(e.pointerId);
+                if (pointersRef.current.size < 2) {
+                  pinchRef.current.isPinching = false;
+                }
                 panRef.current.isPanning = false;
               }}
             >
@@ -387,7 +663,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
           </div>
 
           {/* Right Panel - Editable Fields */}
-          <div className="w-1/2 p-5 overflow-auto bg-white">
+          <div ref={editorScrollRef} className="w-full md:w-1/2 min-h-0 p-4 md:p-5 overflow-y-auto bg-white flex-[3] md:flex-1">
             {/* Items Section */}
             <div className="mb-7">
               <div className="flex items-center justify-between mb-3">
@@ -396,60 +672,43 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                   <Plus className="h-4 w-4 mr-1" /> Add Item
                 </Button>
               </div>
-              <div className="grid grid-cols-12 gap-2 px-2 py-2 mb-2 text-[10px] uppercase tracking-wide text-gray-500 bg-white border border-gray-200 rounded-md">
+              <div className="hidden md:grid grid-cols-12 gap-2 px-2 py-2 mb-2 text-[10px] uppercase tracking-wide text-gray-500 bg-white border border-gray-200 rounded-md">
                 <div className="col-span-6">Item</div>
                 <div className="col-span-2 text-right">Qty</div>
                 <div className="col-span-2 text-right">Unit</div>
                 <div className="col-span-2 text-right">Total</div>
               </div>
-              <div className="space-y-2">
-                {items.map((item, index) => (
-                  <div
-                    key={index}
-                    className="relative grid grid-cols-12 gap-2 p-2 pr-10 bg-white border border-gray-200 rounded-md"
-                  >
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => handleItemChange(index, 'name', e.target.value)}
-                      placeholder="Item name"
-                      className="col-span-6 h-9 px-2 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                    />
-                    <input
-                      type="number"
-                      value={item.quantity}
-                      onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)}
-                      placeholder="Qty"
-                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={item.unit_price}
-                      onChange={(e) => handleItemChange(index, 'unit_price', parseFloat(e.target.value) || 0)}
-                      placeholder="Unit"
-                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={item.total_price}
-                      readOnly
-                      tabIndex={-1}
-                      aria-readonly="true"
-                      className="col-span-2 h-9 self-center px-2 py-1 border rounded-md text-sm text-right bg-gray-50 text-gray-700 appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
-                    />
-                    <button
-                      onClick={() => handleDeleteItem(index)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-red-500 hover:bg-red-50 rounded"
-                      type="button"
-                      aria-label="Delete item"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={(e) => setActiveDragId(String(e.active.id))}
+                onDragCancel={() => setActiveDragId(null)}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={items.map((item, index) => item.__id ?? `missing-${index}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-2">
+                    {items.map((item, index) => (
+                      <SortableItemRow key={item.__id ?? index} item={item} index={index} />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </SortableContext>
+
+                <DragOverlay>
+                  {activeDragItem ? (
+                    <div className="bg-white border border-gray-200 rounded-md p-2 shadow-xl">
+                      <div className="flex items-center gap-2">
+                        <GripVertical className="h-4 w-4 text-gray-400" />
+                        <div className="text-sm font-medium text-gray-900 truncate max-w-[16rem]">
+                          {activeDragItem.name || 'New item'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
             </div>
 
             {/* Taxes Section */}
@@ -462,12 +721,17 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
               </div>
               <div className="space-y-2">
                 {taxes.map((tax, index) => (
-                  <div key={index} className="flex gap-2 items-center">
+                  <div
+                    key={index}
+                    ref={(el) => { taxRowRefs.current[index] = el; }}
+                    className="flex flex-col md:flex-row gap-2 md:items-center"
+                  >
                     <input
                       type="text"
                       value={tax.name}
                       onChange={(e) => handleTaxChange(index, 'name', e.target.value)}
                       placeholder="Tax/Charge name"
+                      ref={(el) => { taxNameInputRefs.current[index] = el; }}
                       className="flex-1 px-2 py-1 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     />
                     <input
@@ -476,7 +740,7 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
                       value={tax.amount}
                       onChange={(e) => handleTaxChange(index, 'amount', parseFloat(e.target.value) || 0)}
                       placeholder="Amount"
-                      className="w-28 px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      className="w-full md:w-28 px-2 py-1 border rounded-md text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                     />
                     <button
                       onClick={() => handleDeleteTax(index)}
@@ -505,9 +769,13 @@ export const ReceiptValidationModal: React.FC<ValidationModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t flex justify-end gap-3">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button onClick={handleValidate} type="button">
+        <div className="shrink-0 px-4 py-3 md:px-6 md:py-4 border-t flex justify-end gap-3">
+          <Button className="md:hidden" size="sm" variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button className="hidden md:inline-flex" variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button className="md:hidden" size="sm" onClick={handleValidate} type="button">
+            {validationErrors ? 'Fix & Validate' : 'Confirm & Continue'}
+          </Button>
+          <Button className="hidden md:inline-flex" onClick={handleValidate} type="button">
             {validationErrors ? 'Fix & Validate' : 'Confirm & Continue'}
           </Button>
         </div>

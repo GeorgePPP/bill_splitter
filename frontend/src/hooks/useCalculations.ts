@@ -3,9 +3,7 @@ import { Person } from '@/types/person.types';
 import { PersonSplit } from '@/types/split.types';
 import { ItemAssignment } from './useItemAssignment';
 import { 
-  calculateSubtotal, 
   roundToCents,
-  distributeAmount
 } from '@/utils/calculations';
 
 export interface CalculationState {

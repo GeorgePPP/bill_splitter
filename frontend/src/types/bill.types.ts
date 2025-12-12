@@ -1,3 +1,5 @@
+import { Person } from '@/types/person.types';
+
 export interface StoreInfo {
   name: string;
   address?: string;

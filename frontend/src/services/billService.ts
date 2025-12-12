@@ -1,6 +1,5 @@
 import apiClient from './api';
 import { BillSplit, BillItemAssignment } from '@/types/bill.types';
-import { Person } from '@/types/person.types';
 
 export class BillService {
   async createBillSplit(data: {

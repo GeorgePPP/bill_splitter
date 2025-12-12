@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { ReceiptData } from '@/types/bill.types';
 
 interface ValidationModalState {
   isOpen: boolean;

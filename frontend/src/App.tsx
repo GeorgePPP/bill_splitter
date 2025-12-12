@@ -234,14 +234,6 @@ const App: React.FC = () => {
     billSplitter.actions.nextStep();
   };
 
-  const handleAssignItem = (itemIndex: number, personId: string) => {
-    itemAssignment.actions.assignItem(
-      itemIndex,
-      personId,
-      billSplitter.state.participants
-    );
-  };
-
   const handleAssignItemToMultiplePeople = (
     itemIndex: number,
     personIds: string[],
@@ -264,10 +256,6 @@ const App: React.FC = () => {
 
   const handleCancelAssignment = () => {
     itemAssignment.actions.cancelPendingAssignment();
-  };
-
-  const handleRemovePersonFromSplit = (itemIndex: number, personId: string) => {
-    itemAssignment.actions.removePersonFromSplit(itemIndex, personId);
   };
 
   const handleCloseSplitModal = () => {
@@ -355,15 +343,12 @@ const App: React.FC = () => {
         case 3:
           return (
             <ItemAssignment
-              items={billSplitter.state.receiptData?.items || []}
               participants={billSplitter.state.participants}
               assignments={itemAssignment.state.assignments}
-              onAssignItem={handleAssignItem}
               onAssignItemToMultiplePeople={handleAssignItemToMultiplePeople}
               onConfirmAssignment={handleConfirmAssignment}
               onCancelAssignment={handleCancelAssignment}
               onUnassignItem={itemAssignment.actions.unassignItem}
-              onRemovePersonFromSplit={handleRemovePersonFromSplit}
               onCloseSplitModal={handleCloseSplitModal}
               onNext={handleCalculateSplit}
               onBack={handleBackFromItemAssignment}
@@ -401,7 +386,7 @@ const App: React.FC = () => {
       />
       
       <main className="flex-1 py-8">
-        <Container>
+        <Container className={billSplitter.state.currentStep === 3 ? 'px-0 sm:px-6 lg:px-8' : undefined}>
           {/* Session Error - now only for localStorage errors */}
           {session.state.error && (
             <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">

@@ -67,7 +67,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
         marginRight: '0',
         width: `${width}px`,
         height: `${height}px`,
-      } as React.CSSProperties,
+      } as Record<string, string>,
     };
   };
 
@@ -262,24 +262,24 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
         </div>
         {personSplits.map((split) => (
           <Card key={split.person_id} ref={(el: HTMLDivElement | null) => { personCardRefs.current[split.person_id] = el; }}>
-            <CardContent className="p-6">
+            <CardContent className="p-5 md:p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-                    <User className="h-5 w-5 text-primary-600" />
+                  <div className="w-12 h-12 md:w-10 md:h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                    <User className="h-6 w-6 md:h-5 md:w-5 text-primary-600" />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-gray-900">{split.person_name}</h4>
-                    <p className="text-sm text-gray-500">
+                    <h4 className="text-lg md:text-base font-semibold text-gray-900">{split.person_name}</h4>
+                    <p className="text-base md:text-sm text-gray-500">
                       {split.items.length} item(s)
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-2xl font-bold text-gray-900">
+                  <div className="text-3xl md:text-2xl font-bold text-gray-900">
                     {formatCurrency(split.total)}
                   </div>
-                  <div className="text-sm text-gray-500">Total</div>
+                  <div className="text-base md:text-sm text-gray-500">Total</div>
                 </div>
               </div>
 
@@ -306,10 +306,10 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
 
               {/* Items breakdown */}
               <div className="space-y-2">
-                <h5 className="text-sm font-medium text-gray-700">Items:</h5>
+                <h5 className="text-base md:text-sm font-medium text-gray-700">Items:</h5>
                 <div className="space-y-1">
                   {split.items.map((item: any, itemIndex) => (
-                    <div key={itemIndex} className="flex justify-between text-sm">
+                    <div key={itemIndex} className="flex justify-between text-base md:text-sm">
                       <span className="text-gray-600 flex items-center">
                         {item.quantity}x {item.name}
                         {item.isSplit && (
@@ -331,7 +331,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
 
               {/* Cost breakdown */}
               <div className="mt-4 pt-4 border-t border-gray-200">
-                <div className="space-y-1 text-sm">
+                <div className="space-y-1 text-base md:text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Subtotal:</span>
                     <span>{formatCurrency(split.subtotal)}</span>
