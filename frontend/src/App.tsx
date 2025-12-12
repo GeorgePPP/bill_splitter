@@ -73,62 +73,59 @@ const App: React.FC = () => {
     try {
       billSplitter.actions.setLoading(true);
       console.log('[App] Starting receipt upload for file:', file.name);
-      
-      // Upload receipt
-      const uploadResponse = await receiptOCR.actions.uploadReceipt(file);
-      console.log('[App] Upload response:', uploadResponse);
-      
-      if (uploadResponse.receipt_id) {
-        // Process receipt - validation errors will be caught and set in state
-        try {
-          const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
-          console.log('[App] Process response:', processResponse);
-          
-          // Save OCR text immediately
-          if (processResponse.ocr_text) {
-            session.actions.saveOcrText(processResponse.ocr_text);
-          }
-          
-          if (processResponse.processed_data) {
-            console.log('[App] Setting receipt data');
-            billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id, false);
-            itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
-            
-            // Store validation modal state globally
-            const imagePreview = URL.createObjectURL(file);
-            validationModal.actions.openModal(
-              imagePreview,
-              processResponse.processed_data,
-              null,
-              processResponse.ocr_text
-            );
-          }
-        } catch (error) {
-          const apiError = error as any;
-          console.log('[App] Process error:', {
-            status: apiError.status,
-            message: apiError.message,
-            details: apiError.details,
-            needsValidation: receiptOCR.state.needsValidation
-          });
-          
-          // Save OCR text even if processing failed
-          if (apiError.ocr_text) {
-            session.actions.saveOcrText(apiError.ocr_text);
-          }
-          
-          // If validation error (422), show validation modal with error data
-          if (apiError.status === 422 && apiError.extracted_data) {
-            const imagePreview = URL.createObjectURL(file);
-            validationModal.actions.openModal(
-              imagePreview,
-              apiError.extracted_data,
-              apiError.details,
-              apiError.ocr_text
-            );
-          } else {
-            billSplitter.actions.setError('Failed to process receipt. Please try again.');
-          }
+
+      // Upload and process receipt in one call (stateless)
+      try {
+        const response = await receiptOCR.actions.uploadAndProcessReceipt(file);
+        console.log('[App] Process response:', response);
+
+        // Save OCR text immediately
+        if (response.ocr_text) {
+          session.actions.saveOcrText(response.ocr_text);
+        }
+
+        if (response.processed_data) {
+          console.log('[App] Setting receipt data');
+          // Use file name as receipt ID since backend is stateless
+          const receiptId = `receipt-${Date.now()}`;
+          billSplitter.actions.setReceiptData(response.processed_data, receiptId, false);
+          itemAssignment.actions.initializeAssignments(response.processed_data.items);
+
+          // Store validation modal state globally
+          const imagePreview = URL.createObjectURL(file);
+          validationModal.actions.openModal(
+            imagePreview,
+            response.processed_data,
+            null,
+            response.ocr_text
+          );
+        }
+      } catch (error) {
+        const apiError = error as any;
+        console.log('[App] Process error:', {
+          status: apiError.status,
+          message: apiError.message,
+          details: apiError.details,
+          needsValidation: receiptOCR.state.needsValidation
+        });
+
+        // Save OCR text even if processing failed
+        const errorDetails = apiError.details?.detail || apiError.details;
+        if (errorDetails?.raw_text) {
+          session.actions.saveOcrText(errorDetails.raw_text);
+        }
+
+        // If validation error (422), show validation modal with error data
+        if (apiError.status === 422 && errorDetails?.extracted_data) {
+          const imagePreview = URL.createObjectURL(file);
+          validationModal.actions.openModal(
+            imagePreview,
+            errorDetails.extracted_data,
+            errorDetails,
+            errorDetails.raw_text
+          );
+        } else {
+          billSplitter.actions.setError('Failed to process receipt. Please try again.');
         }
       }
     } catch (error) {
@@ -142,46 +139,42 @@ const App: React.FC = () => {
   const handleValidationCorrection = async (correctedData: any) => {
     try {
       billSplitter.actions.setLoading(true);
-      
-      if (billSplitter.state.receiptId) {
-        // Save corrected data to session immediately
-        console.log('[App] Saving corrected receipt data to session');
-        session.actions.saveReceiptData(correctedData, billSplitter.state.receiptId);
-        
-        // Check if this is the initial validation (no changes made) or reprocessing
-        const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
-        
-        if (hasChanges) {
-          // User made changes, reprocess with corrected data
-          const processResponse = await receiptOCR.actions.reprocessWithCorrectedData(
-            billSplitter.state.receiptId,
-            correctedData
-          );
-          
-          if (processResponse.processed_data) {
-            billSplitter.actions.setReceiptData(processResponse.processed_data, billSplitter.state.receiptId, false);
-            itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
-            
-            // Mark as validated in global state
-            validationModal.actions.markAsValidated(processResponse.processed_data);
-            validationModal.actions.closeModal();
-            
-            // Always go to assignment page (step 3) after validation
-            billSplitter.actions.goToStep(3);
-          }
-        } else {
-          // No changes made, just proceed with existing data
-          if (receiptOCR.state.processedData) {
-            billSplitter.actions.setReceiptData(receiptOCR.state.processedData, billSplitter.state.receiptId, false);
-            itemAssignment.actions.initializeAssignments(receiptOCR.state.processedData.items);
-            
-            // Mark as validated in global state
-            validationModal.actions.markAsValidated(receiptOCR.state.processedData);
-            validationModal.actions.closeModal();
-            
-            // Always go to assignment page (step 3) after validation
-            billSplitter.actions.goToStep(3);
-          }
+
+      // Save corrected data to session immediately
+      console.log('[App] Saving corrected receipt data to session');
+      const receiptId = billSplitter.state.receiptId || `receipt-${Date.now()}`;
+      session.actions.saveReceiptData(correctedData, receiptId);
+
+      // Check if this is the initial validation (no changes made) or reprocessing
+      const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
+
+      if (hasChanges) {
+        // User made changes, validate with corrected data (no receiptId needed)
+        const processResponse = await receiptOCR.actions.validateCorrectedData(correctedData);
+
+        if (processResponse.processed_data) {
+          billSplitter.actions.setReceiptData(processResponse.processed_data, receiptId, false);
+          itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
+
+          // Mark as validated in global state
+          validationModal.actions.markAsValidated(processResponse.processed_data);
+          validationModal.actions.closeModal();
+
+          // Always go to assignment page (step 3) after validation
+          billSplitter.actions.goToStep(3);
+        }
+      } else {
+        // No changes made, just proceed with existing data
+        if (receiptOCR.state.processedData) {
+          billSplitter.actions.setReceiptData(receiptOCR.state.processedData, receiptId, false);
+          itemAssignment.actions.initializeAssignments(receiptOCR.state.processedData.items);
+
+          // Mark as validated in global state
+          validationModal.actions.markAsValidated(receiptOCR.state.processedData);
+          validationModal.actions.closeModal();
+
+          // Always go to assignment page (step 3) after validation
+          billSplitter.actions.goToStep(3);
         }
       }
     } catch (error) {
