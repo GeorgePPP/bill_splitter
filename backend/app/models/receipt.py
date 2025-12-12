@@ -1,45 +1,44 @@
-from datetime import datetime
+# backend/app/models/receipt.py
+"""
+Receipt data models for bill splitting.
+No persistence-related fields - pure data transfer objects.
+"""
 from typing import Optional, List
 from pydantic import BaseModel
 
 
 class StoreInfo(BaseModel):
+    """Store/restaurant information."""
     name: str
     address: Optional[str] = None
     phone: Optional[str] = None
 
 
 class BillItem(BaseModel):
+    """A single item on the receipt."""
     name: str
     quantity: int
     unit_price: float
-    total_price: float  # Changed from 'total' to 'total_price' to match requirements
+    total_price: float
 
 
 class TaxOrCharge(BaseModel):
+    """Tax, service charge, or discount line item."""
     name: str
-    amount: float
+    amount: float  # Negative for discounts
     percent: Optional[float] = None
 
 
 class ReceiptData(BaseModel):
+    """Complete extracted receipt data."""
     receipt_number: str
     date: str
     time: str
     store: StoreInfo
     items: List[BillItem]
     subtotal: float
-    taxes_or_charges: List[TaxOrCharge] = []  # New field to replace individual tax/service_charge
-    grand_total: float  # Changed from 'total_amount' to 'grand_total' to match requirements
+    taxes_or_charges: List[TaxOrCharge] = []
+    grand_total: float
     payment_method: str
     transaction_id: Optional[str] = None
     notes: Optional[str] = None
-
-
-class Receipt(BaseModel):
-    id: Optional[str] = None
-    filename: str
-    raw_text: str
-    processed_data: Optional[ReceiptData] = None
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()

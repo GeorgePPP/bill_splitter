@@ -1,3 +1,4 @@
-from . import health, receipt, bill, split
+# backend/app/api/routes/__init__.py
+from . import health, receipt, split
 
-__all__ = ["health", "receipt", "bill", "split"]
+__all__ = ["health", "receipt", "split"]

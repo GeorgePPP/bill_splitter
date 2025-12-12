@@ -18,7 +18,7 @@ import { ReceiptValidationModal } from '@/components/BillSplitter/ReceiptValidat
 const App: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
-  // Initialize session first
+  // Initialize session (now fully local - no backend calls)
   const session = useSession();
   
   // Initialize other hooks with session actions
@@ -34,21 +34,18 @@ const App: React.FC = () => {
   const calculations = useCalculations();
   const validationModal = useValidationModal();
 
-  // Create session on app start
+  // Create session if none exists (local only - instant)
   useEffect(() => {
-    if (session.state.isInitialized && !session.state.sessionToken && !session.state.hasExistingSession) {
-      session.actions.createNewSession().catch(error => {
-        console.error('Failed to create session on startup:', error);
-        // Continue without session - app will still work
-      });
+    if (!session.state.sessionToken && !session.state.hasExistingSession) {
+      session.actions.createNewSession();
     }
-  }, [session.state.isInitialized, session.state.sessionToken, session.state.hasExistingSession, session.actions]);
+  }, [session.state.sessionToken, session.state.hasExistingSession, session.actions]);
 
   // Restore session data if available
   useEffect(() => {
     const restoreSessionData = async () => {
       if (session.state.hasExistingSession && session.state.sessionData) {
-        console.log('Restoring session data...');
+        console.log('Restoring session data from localStorage...');
         const restoredData = await session.actions.restoreSession();
         
         if (restoredData) {
@@ -62,7 +59,6 @@ const App: React.FC = () => {
             
             // Initialize item assignments
             itemAssignment.actions.initializeAssignments(restoredData.receiptData.items);
-            // Item assignments will be restored through billSplitter.actions.restoreState
           }
           
           console.log('Session data restored successfully');
@@ -70,9 +66,7 @@ const App: React.FC = () => {
       }
     };
 
-    restoreSessionData().catch(error => {
-      console.error('Failed to restore session data:', error);
-    });
+    restoreSessionData();
   }, [session.state.hasExistingSession, session.state.sessionData, billSplitter.actions, validationModal.actions, itemAssignment.actions, session.actions]);
 
   const handleReceiptUpload = async (file: File) => {
@@ -90,14 +84,13 @@ const App: React.FC = () => {
           const processResponse = await receiptOCR.actions.processReceipt(uploadResponse.receipt_id);
           console.log('[App] Process response:', processResponse);
           
-          // Save OCR text immediately (expensive to reprocess)
+          // Save OCR text immediately
           if (processResponse.ocr_text) {
-            session.actions.saveOcrText?.(processResponse.ocr_text);
+            session.actions.saveOcrText(processResponse.ocr_text);
           }
           
           if (processResponse.processed_data) {
-            // Set receipt data without auto-saving to session (to reduce DB calls)
-            console.log('[App] Setting receipt data without auto-save');
+            console.log('[App] Setting receipt data');
             billSplitter.actions.setReceiptData(processResponse.processed_data, uploadResponse.receipt_id, false);
             itemAssignment.actions.initializeAssignments(processResponse.processed_data.items);
             
@@ -109,8 +102,6 @@ const App: React.FC = () => {
               null,
               processResponse.ocr_text
             );
-            
-            // Don't auto-advance to next step - let validation modal handle the flow
           }
         } catch (error) {
           const apiError = error as any;
@@ -123,7 +114,7 @@ const App: React.FC = () => {
           
           // Save OCR text even if processing failed
           if (apiError.ocr_text) {
-            session.actions.saveOcrText?.(apiError.ocr_text);
+            session.actions.saveOcrText(apiError.ocr_text);
           }
           
           // If validation error (422), show validation modal with error data
@@ -148,16 +139,14 @@ const App: React.FC = () => {
     }
   };
   
-  // Add this new function:
-  
   const handleValidationCorrection = async (correctedData: any) => {
     try {
       billSplitter.actions.setLoading(true);
       
       if (billSplitter.state.receiptId) {
-        // Save corrected data to session immediately (expensive to reprocess)
+        // Save corrected data to session immediately
         console.log('[App] Saving corrected receipt data to session');
-        session.actions.saveReceiptData?.(correctedData, billSplitter.state.receiptId);
+        session.actions.saveReceiptData(correctedData, billSplitter.state.receiptId);
         
         // Check if this is the initial validation (no changes made) or reprocessing
         const hasChanges = JSON.stringify(correctedData) !== JSON.stringify(receiptOCR.state.extractedData);
@@ -189,71 +178,68 @@ const App: React.FC = () => {
             // Mark as validated in global state
             validationModal.actions.markAsValidated(receiptOCR.state.processedData);
             validationModal.actions.closeModal();
+            
+            // Always go to assignment page (step 3) after validation
+            billSplitter.actions.goToStep(3);
           }
-          // Always go to assignment page (step 3) after validation
-          billSplitter.actions.goToStep(3);
         }
       }
     } catch (error) {
-      const apiError = error as any;
-      // If still validation error, modal stays open with new errors
-      if (apiError.status !== 422) {
-        billSplitter.actions.setError('Failed to validate receipt. Please try again.');
-      }
+      console.error('[App] Error validating receipt:', error);
+      billSplitter.actions.setError('Failed to validate receipt. Please try again.');
     } finally {
       billSplitter.actions.setLoading(false);
     }
   };
 
-
-  const handleReceiptProcessed = async () => {
-    // This is called when the user clicks "Process Receipt" button
-    // The actual processing happens in handleReceiptUpload
+  const handleReceiptProcessed = (receiptData: any, receiptId: string) => {
+    billSplitter.actions.setReceiptData(receiptData, receiptId, true);
+    itemAssignment.actions.initializeAssignments(receiptData.items);
+    billSplitter.actions.nextStep();
   };
 
   const handleAssignItem = (itemIndex: number, personId: string) => {
-    return itemAssignment.actions.assignItem(itemIndex, personId, billSplitter.state.participants);
+    itemAssignment.actions.assignItem(itemIndex, personId);
   };
 
-  const handleAssignItemToMultiplePeople = (itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => {
-    itemAssignment.actions.assignItemToMultiplePeople(itemIndex, personIds, splitType, customSplits, forceCustomSplit);
+  const handleAssignItemToMultiplePeople = (itemIndex: number) => {
+    itemAssignment.actions.openSplitModal(itemIndex);
   };
 
-  const handleConfirmAssignment = () => {
-    itemAssignment.actions.confirmPendingAssignment();
+  const handleConfirmAssignment = (personId: string) => {
+    itemAssignment.actions.confirmAssignment(personId);
   };
 
   const handleCancelAssignment = () => {
-    itemAssignment.actions.cancelPendingAssignment();
+    itemAssignment.actions.cancelAssignment();
   };
 
-  const handleRemovePersonFromSplit = (itemIndex: number, personId: string) => {
-    itemAssignment.actions.removePersonFromSplit(itemIndex, personId);
+  const handleRemovePersonFromSplit = (personId: string) => {
+    itemAssignment.actions.removePersonFromSplit(personId);
   };
 
   const handleCloseSplitModal = () => {
     itemAssignment.actions.closeSplitModal();
   };
 
-  const handleCalculateSplit = async () => {
-    try {
-      billSplitter.actions.setLoading(true);
-      
-      // Calculate split using the calculations hook
-      const personSplits = calculations.actions.calculateSplit(
-        billSplitter.state.participants,
-        itemAssignment.state.assignments,
-        billSplitter.state.receiptData!,
-        'proportional'
+  const handleCalculateSplit = () => {
+    const receiptData = billSplitter.state.receiptData;
+    const assignments = itemAssignment.state.assignments;
+    const participants = billSplitter.state.participants;
+
+    if (receiptData && assignments && participants) {
+      const result = calculations.actions.calculateSplit(
+        receiptData,
+        assignments,
+        participants
       );
       
-      billSplitter.actions.setSplitResults(personSplits);
+      // Save split results to session
+      if (result) {
+        session.actions.saveSplitResults(result);
+      }
+      
       billSplitter.actions.nextStep();
-    } catch (error) {
-      console.error('Error calculating split:', error);
-      billSplitter.actions.setError('Failed to calculate split. Please try again.');
-    } finally {
-      billSplitter.actions.setLoading(false);
     }
   };
 
@@ -265,7 +251,7 @@ const App: React.FC = () => {
     itemAssignment.actions.reset();
     calculations.actions.reset();
     validationModal.actions.reset();
-    // Session and known participants are preserved automatically
+    // Known participants are preserved in localStorage
     console.log('Starting over - known participants preserved:', session.actions.getKnownParticipants().length);
   };
 
@@ -350,18 +336,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Show loading while session is initializing
-  if (!session.state.isInitialized) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Initializing session...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen flex flex-col">
       <Header
@@ -371,18 +345,12 @@ const App: React.FC = () => {
       
       <main className="flex-1 py-8">
         <Container>
-          {/* Session Error */}
+          {/* Session Error - now only for localStorage errors */}
           {session.state.error && (
-            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <div className="flex items-center space-x-2">
-                <div className="text-red-500">⚠️</div>
-                <p className="text-red-700">{session.state.error}</p>
-                <button
-                  onClick={() => session.actions.createNewSession()}
-                  className="ml-auto text-red-500 hover:text-red-700"
-                >
-                  ✕
-                </button>
+                <div className="text-yellow-500">⚠️</div>
+                <p className="text-yellow-700">{session.state.error}</p>
               </div>
             </div>
           )}
@@ -427,11 +395,11 @@ const App: React.FC = () => {
         </Container>
       </main>
       
-      {/* Global Validation Modal - Now acts as a "page" */}
+      {/* Global Validation Modal */}
       {validationModal.state.isOpen && validationModal.state.imageUrl && validationModal.state.extractedData && (
         <ReceiptValidationModal
           isOpen={validationModal.state.isOpen}
-          onClose={() => {}} // Don't allow closing without validation - this is now a "page"
+          onClose={() => {}}
           imageUrl={validationModal.state.imageUrl}
           extractedData={validationModal.state.extractedData}
           validationErrors={validationModal.state.validationErrors}

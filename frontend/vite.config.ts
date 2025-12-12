@@ -11,6 +11,9 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: [
+      'ethyl-intersystem-immoderately.ngrok-free.dev',
+    ],
     port: 3000,
     proxy: {
       '/api': {

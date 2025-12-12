@@ -1,9 +1,39 @@
 // frontend/src/hooks/useSession.ts
-import { useState, useEffect, useCallback } from 'react';
-import { sessionService, SessionData, UpdateSessionData } from '@/services/sessionService';
+/**
+ * Client-side session management using React state + localStorage.
+ * No backend calls - all state is managed locally.
+ */
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Person } from '@/types/person.types';
 import { BillItem, ReceiptData } from '@/types/bill.types';
 import { PersonSplit } from '@/types/split.types';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface SessionData {
+  current_step: number;
+  participants: Person[];
+  receipt_data: ReceiptData | null;
+  receipt_id: string | null;
+  item_assignments: Array<{ item: BillItem; assignedTo: string | null }>;
+  split_results: PersonSplit[] | null;
+  known_participants: Person[];
+  ocr_text: string | null;
+  updated_at: string;
+}
+
+interface UpdateSessionData {
+  current_step?: number;
+  participants?: Person[];
+  receipt_data?: ReceiptData;
+  receipt_id?: string;
+  item_assignments?: Array<{ item: BillItem; assignedTo: string | null }>;
+  split_results?: PersonSplit[];
+  known_participants?: Person[];
+  ocr_text?: string;
+}
 
 export interface SessionState {
   sessionToken: string | null;
@@ -14,177 +44,131 @@ export interface SessionState {
   hasExistingSession: boolean;
 }
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+const STORAGE_KEY = 'billsplitter_session';
+
+const DEFAULT_SESSION_DATA: SessionData = {
+  current_step: 1,
+  participants: [],
+  receipt_data: null,
+  receipt_id: null,
+  item_assignments: [],
+  split_results: null,
+  known_participants: [],
+  ocr_text: null,
+  updated_at: new Date().toISOString(),
+};
+
+// ============================================================================
+// Storage Helpers
+// ============================================================================
+
+const loadFromStorage = (): SessionData | null => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (error) {
+    console.error('Failed to load session from storage:', error);
+  }
+  return null;
+};
+
+const saveToStorage = (data: SessionData): void => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.error('Failed to save session to storage:', error);
+  }
+};
+
+const clearStorage = (): void => {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.error('Failed to clear session storage:', error);
+  }
+};
+
+// ============================================================================
+// Hook
+// ============================================================================
+
 export const useSession = () => {
-  const [state, setState] = useState<SessionState>({
-    sessionToken: null,
-    sessionData: null,
-    isLoading: false,
-    error: null,
-    isInitialized: true, // Start as initialized to not block UI
-    hasExistingSession: false,
+  // Load initial state from localStorage
+  const [state, setState] = useState<SessionState>(() => {
+    const existingData = loadFromStorage();
+    return {
+      sessionToken: existingData ? 'local-session' : null,
+      sessionData: existingData,
+      isLoading: false,
+      error: null,
+      isInitialized: true, // Always initialized immediately
+      hasExistingSession: !!existingData,
+    };
   });
 
-  // Initialize session on mount (non-blocking)
+  // Persist to localStorage whenever sessionData changes
   useEffect(() => {
-    // Check for existing token and try to load session data
-    const existingToken = sessionService.getSessionToken();
-    if (existingToken) {
-      console.log('Found existing session token, loading session data...');
-      setState(prev => ({
-        ...prev,
-        sessionToken: existingToken,
-        hasExistingSession: true,
-        isLoading: true,
-      }));
-      
-      // Try to load the session data
-      sessionService.getSession(existingToken)
-        .then(response => {
-          if (response.success) {
-            console.log('Session data loaded successfully');
-            setState(prev => ({
-              ...prev,
-              sessionData: response.data,
-              isLoading: false,
-            }));
-          } else {
-            console.log('Failed to load session data, will create new session');
-            setState(prev => ({
-              ...prev,
-              hasExistingSession: false,
-              isLoading: false,
-            }));
-          }
-        })
-        .catch(error => {
-          console.error('Error loading session:', error);
-          setState(prev => ({
-            ...prev,
-            hasExistingSession: false,
-            isLoading: false,
-            error: null, // Don't show error - just continue without session
-          }));
-        });
+    if (state.sessionData) {
+      saveToStorage(state.sessionData);
     }
-  }, []);
+  }, [state.sessionData]);
 
-  // 60-second heartbeat to extend session expiry
-  useEffect(() => {
-    if (!state.sessionToken) return;
-
-    const heartbeat = setInterval(async () => {
-      try {
-        await sessionService.extendSession(state.sessionToken!);
-        console.log('Session heartbeat sent successfully');
-      } catch (error) {
-        console.error('Session heartbeat failed:', error);
-        // Don't clear session on heartbeat failure - user might still be working
-      }
-    }, 60000); // 60 seconds
-
-    return () => clearInterval(heartbeat);
-  }, [state.sessionToken]);
-
-  // Remove this function entirely - it's causing circular dependency
-
+  // Create new session (just initializes default state)
   const createNewSession = useCallback(async () => {
-    console.log('Creating new session...');
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-
-    try {
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session creation timeout')), 5000)
-      );
-      
-      const response = await Promise.race([
-        sessionService.createSession(),
-        timeoutPromise
-      ]) as any;
-      
-      console.log('Create session response:', response);
-      
-      if (response.success) {
-        const { session_token } = response.data;
-        sessionService.saveSessionToken(session_token);
-        console.log('Session token saved:', session_token);
-        
-        // Get the full session data with timeout
-        const sessionResponse = await Promise.race([
-          sessionService.getSession(session_token),
-          timeoutPromise
-        ]) as any;
-        
-        console.log('Session data retrieved:', sessionResponse);
-        
-        setState(prev => ({
-          ...prev,
-          sessionToken: session_token,
-          sessionData: sessionResponse.data,
-          hasExistingSession: false,
-          isInitialized: true,
-          isLoading: false,
-        }));
-        console.log('Session initialized successfully');
-      }
-    } catch (error) {
-      console.error('Failed to create new session:', error);
-      setState(prev => ({
-        ...prev,
-        error: 'Session unavailable - app will work without persistence',
-        isLoading: false,
-        isInitialized: true,
-      }));
-    }
+    console.log('Creating new local session...');
+    
+    const newSessionData: SessionData = {
+      ...DEFAULT_SESSION_DATA,
+      updated_at: new Date().toISOString(),
+    };
+    
+    saveToStorage(newSessionData);
+    
+    setState({
+      sessionToken: 'local-session',
+      sessionData: newSessionData,
+      isLoading: false,
+      error: null,
+      isInitialized: true,
+      hasExistingSession: false,
+    });
+    
+    console.log('Local session created');
   }, []);
 
-  const updateSession = useCallback(async (data: UpdateSessionData) => {
-    if (!state.sessionToken) {
-      console.log('No session token, skipping update');
-      return false;
-    }
-
-    try {
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session update timeout')), 3000)
-      );
+  // Update session data
+  const updateSession = useCallback(async (data: UpdateSessionData): Promise<boolean> => {
+    setState(prev => {
+      if (!prev.sessionData) return prev;
       
-      const response = await Promise.race([
-        sessionService.updateSession(state.sessionToken, data),
-        timeoutPromise
-      ]) as any;
+      const updatedData: SessionData = {
+        ...prev.sessionData,
+        ...data,
+        updated_at: new Date().toISOString(),
+      };
       
-      if (response.success) {
-        // Update local session data immediately
-        setState(prev => ({
-          ...prev,
-          sessionData: prev.sessionData ? {
-            ...prev.sessionData,
-            ...data,
-            updated_at: new Date().toISOString(),
-          } : null,
-        }));
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Failed to update session (continuing anyway):', error);
-      // Don't set error state - just continue without session
-      return false;
-    }
-  }, [state.sessionToken]);
-
-  const clearSession = useCallback(async () => {
-    if (state.sessionToken) {
-      try {
-        await sessionService.deleteSession(state.sessionToken);
-      } catch (error) {
-        console.error('Failed to delete session:', error);
-      }
-    }
+      // Save synchronously
+      saveToStorage(updatedData);
+      
+      return {
+        ...prev,
+        sessionData: updatedData,
+      };
+    });
     
-    sessionService.removeSessionToken();
+    return true;
+  }, []);
+
+  // Clear session
+  const clearSession = useCallback(async () => {
+    clearStorage();
+    
     setState({
       sessionToken: null,
       sessionData: null,
@@ -193,8 +177,11 @@ export const useSession = () => {
       isInitialized: true,
       hasExistingSession: false,
     });
-  }, [state.sessionToken]);
+    
+    console.log('Session cleared');
+  }, []);
 
+  // Restore session (returns existing data if available)
   const restoreSession = useCallback(async () => {
     if (state.hasExistingSession && state.sessionData) {
       return {
@@ -210,115 +197,107 @@ export const useSession = () => {
     return null;
   }, [state.hasExistingSession, state.sessionData]);
 
-  // Auto-save helpers with improved error handling
-  const saveStep = useCallback(async (step: number) => {
-    if (!state.sessionToken) return false;
-    try {
-      return await updateSession({ current_step: step });
-    } catch (error) {
-      console.error('Failed to save step:', error);
-      return false;
-    }
-  }, [state.sessionToken, updateSession]);
+  // ============================================================================
+  // Convenience Save Methods
+  // ============================================================================
 
-  const saveParticipants = useCallback(async (participants: Person[]) => {
-    if (!state.sessionToken) return false;
-    try {
-      // Update both current participants and known participants
-      const currentKnown = state.sessionData?.known_participants || [];
-      const allKnownParticipants = [...currentKnown];
+  const saveStep = useCallback(async (step: number): Promise<boolean> => {
+    return updateSession({ current_step: step });
+  }, [updateSession]);
+
+  const saveParticipants = useCallback(async (participants: Person[]): Promise<boolean> => {
+    // Update known participants (deduplicated)
+    const currentKnown = state.sessionData?.known_participants || [];
+    const allKnown = [...currentKnown];
+    
+    participants.forEach(participant => {
+      if (!participant.name?.trim()) return;
       
-      // Only add participants with valid names to known list (avoid duplicates by id and name)
-      participants.forEach(participant => {
-        // Skip participants with empty or invalid names
-        if (!participant.name || !participant.name.trim()) {
-          return;
-        }
-        
-        // Check if already exists by id or by name (case insensitive)
-        const existsByIdOrName = allKnownParticipants.some(known => 
-          known.id === participant.id || 
-          known.name.trim().toLowerCase() === participant.name.trim().toLowerCase()
-        );
-        
-        if (!existsByIdOrName) {
-          allKnownParticipants.push(participant);
-        }
-      });
+      const exists = allKnown.some(known =>
+        known.id === participant.id ||
+        known.name.trim().toLowerCase() === participant.name.trim().toLowerCase()
+      );
       
-      return await updateSession({ 
-        participants, 
-        known_participants: allKnownParticipants 
-      });
-    } catch (error) {
-      console.error('Failed to save participants:', error);
-      return false;
-    }
-  }, [state.sessionToken, state.sessionData, updateSession]);
+      if (!exists) {
+        allKnown.push(participant);
+      }
+    });
+    
+    return updateSession({
+      participants,
+      known_participants: allKnown,
+    });
+  }, [updateSession, state.sessionData?.known_participants]);
 
-  const saveReceiptData = useCallback(async (receiptData: ReceiptData, receiptId: string) => {
-    if (!state.sessionToken) return false;
-    try {
-      return await updateSession({ receipt_data: receiptData, receipt_id: receiptId });
-    } catch (error) {
-      console.error('Failed to save receipt data:', error);
-      return false;
-    }
-  }, [state.sessionToken, updateSession]);
+  const saveReceiptData = useCallback(async (
+    receiptData: ReceiptData,
+    receiptId: string
+  ): Promise<boolean> => {
+    return updateSession({
+      receipt_data: receiptData,
+      receipt_id: receiptId,
+    });
+  }, [updateSession]);
 
-  const saveItemAssignments = useCallback(async (itemAssignments: Array<{ item: BillItem; assignedTo: string | null }>) => {
-    if (!state.sessionToken) return false;
-    try {
-      return await updateSession({ item_assignments: itemAssignments });
-    } catch (error) {
-      console.error('Failed to save item assignments:', error);
-      return false;
-    }
-  }, [state.sessionToken, updateSession]);
+  const saveItemAssignments = useCallback(async (
+    itemAssignments: Array<{ item: BillItem; assignedTo: string | null }>
+  ): Promise<boolean> => {
+    return updateSession({ item_assignments: itemAssignments });
+  }, [updateSession]);
 
-  const saveSplitResults = useCallback(async (splitResults: PersonSplit[]) => {
-    if (!state.sessionToken) return false;
-    try {
-      return await updateSession({ split_results: splitResults });
-    } catch (error) {
-      console.error('Failed to save split results:', error);
-      return false;
-    }
-  }, [state.sessionToken, updateSession]);
+  const saveSplitResults = useCallback(async (
+    splitResults: PersonSplit[]
+  ): Promise<boolean> => {
+    return updateSession({ split_results: splitResults });
+  }, [updateSession]);
 
-  const saveOcrText = useCallback(async (ocrText: string) => {
-    if (!state.sessionToken) return false;
-    try {
-      console.log('Saving OCR text to session (expensive to reprocess)');
-      return await updateSession({ ocr_text: ocrText });
-    } catch (error) {
-      console.error('Failed to save OCR text:', error);
-      return false;
-    }
-  }, [state.sessionToken, updateSession]);
+  const saveOcrText = useCallback(async (ocrText: string): Promise<boolean> => {
+    console.log('Saving OCR text to local session');
+    return updateSession({ ocr_text: ocrText });
+  }, [updateSession]);
 
-  const getKnownParticipants = useCallback(() => {
-    const knownParticipants = state.sessionData?.known_participants || [];
-    // Filter out any participants with empty or invalid names
-    return knownParticipants.filter(participant => 
-      participant.name && participant.name.trim().length > 0
-    );
-  }, [state.sessionData]);
+  // Get known participants (filtered for valid names)
+  const getKnownParticipants = useCallback((): Person[] => {
+    const known = state.sessionData?.known_participants || [];
+    return known.filter(p => p.name?.trim().length > 0);
+  }, [state.sessionData?.known_participants]);
+
+  // ============================================================================
+  // Return Value
+  // ============================================================================
+
+  // Memoize actions to prevent unnecessary re-renders
+  const actions = useMemo(() => ({
+    createNewSession,
+    updateSession,
+    clearSession,
+    restoreSession,
+    getKnownParticipants,
+    saveStep,
+    saveParticipants,
+    saveReceiptData,
+    saveItemAssignments,
+    saveSplitResults,
+    saveOcrText,
+  }), [
+    createNewSession,
+    updateSession,
+    clearSession,
+    restoreSession,
+    getKnownParticipants,
+    saveStep,
+    saveParticipants,
+    saveReceiptData,
+    saveItemAssignments,
+    saveSplitResults,
+    saveOcrText,
+  ]);
 
   return {
     state,
-    actions: {
-      createNewSession,
-      updateSession,
-      clearSession,
-      restoreSession,
-      getKnownParticipants,
-      saveStep,
-      saveParticipants,
-      saveReceiptData,
-      saveItemAssignments,
-      saveSplitResults,
-      saveOcrText,
-    },
+    actions,
   };
 };
+
+// Re-export types for backward compatibility
+export type { SessionData, UpdateSessionData };

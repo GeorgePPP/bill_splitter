@@ -1,6 +1,6 @@
+# backend/app/core/logging.py
 import logging
 import sys
-from typing import Any, Dict
 
 
 def setup_logging() -> None:

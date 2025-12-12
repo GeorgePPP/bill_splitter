@@ -1,240 +1,359 @@
+# backend/app/api/routes/split.py
+"""
+Stateless bill split calculation endpoint.
+All data passed in request, no server-side storage.
+"""
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Dict, Any
-import uuid
-from datetime import datetime
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
 
-from app.models.split import SplitCalculation, PersonSplit
-from app.models.person import Person
-from app.schemas.split_schema import SplitCalculationRequestSchema, SplitCalculationResponseSchema
-from app.services.split_calculator import split_calculator_service
-from app.services.tax_calculator import tax_calculator_service
-from app.utils.exceptions import BillNotFoundError, CalculationError
-from app.api.dependencies import get_current_user, get_logger_dependency
+from app.schemas.receipt_schema import ReceiptDataSchema
+from app.api.dependencies import get_logger_dependency
 
 router = APIRouter(prefix="/split", tags=["split"])
 
-# In-memory storage for demo purposes
-splits_storage = {}
+
+# ============================================================================
+# Request/Response Schemas
+# ============================================================================
+
+class Participant(BaseModel):
+    """A person participating in the bill split."""
+    id: str
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
 
-@router.post("/calculate", response_model=SplitCalculationResponseSchema)
+class ItemAssignment(BaseModel):
+    """Assignment of an item to participants."""
+    item_index: int = Field(..., description="Index of the item in receipt_data.items")
+    person_ids: List[str] = Field(..., description="IDs of people sharing this item")
+    shares: Optional[Dict[str, float]] = Field(
+        None, 
+        description="Custom share ratios per person (defaults to equal split)"
+    )
+
+
+class SplitCalculationRequest(BaseModel):
+    """Request for calculating bill split."""
+    receipt_data: ReceiptDataSchema
+    participants: List[Participant]
+    item_assignments: List[ItemAssignment]
+    tax_distribution: str = Field(
+        "proportional", 
+        description="How to distribute tax: 'proportional' or 'equal'"
+    )
+    service_charge_distribution: str = Field(
+        "proportional",
+        description="How to distribute service charges: 'proportional' or 'equal'"
+    )
+    discount_distribution: str = Field(
+        "proportional",
+        description="How to distribute discounts: 'proportional' or 'equal'"
+    )
+
+
+class PersonSplitResult(BaseModel):
+    """Split result for a single person."""
+    person_id: str
+    person_name: str
+    items: List[Dict[str, Any]]
+    subtotal: float
+    tax_share: float
+    service_charge_share: float
+    discount_share: float
+    total: float
+
+
+class SplitTotals(BaseModel):
+    """Bill totals summary."""
+    items_total: float
+    subtotal: float
+    total_tax: float
+    total_service_charge: float
+    total_discount: float
+    grand_total: float
+
+
+class SplitCalculationResponse(BaseModel):
+    """Response for split calculation."""
+    success: bool
+    message: str
+    person_splits: List[PersonSplitResult]
+    totals: SplitTotals
+    unassigned_items: List[Dict[str, Any]] = []
+    validation_warnings: List[str] = []
+
+
+# ============================================================================
+# Endpoints
+# ============================================================================
+
+@router.post("/calculate", response_model=SplitCalculationResponse)
 async def calculate_split(
-    split_request: SplitCalculationRequestSchema,
-    current_user = Depends(get_current_user),
-    logger = Depends(get_logger_dependency)
+    request: SplitCalculationRequest,
+    logger=Depends(get_logger_dependency)
 ):
     """
-    Calculate bill split for participants.
+    Calculate bill split based on item assignments.
+    
+    This is a stateless calculation - all data is passed in the request
+    and the result is returned without any server-side storage.
+    
+    Item assignments specify which participants are responsible for each item.
+    Items can be split among multiple people with optional custom share ratios.
+    
+    Tax, service charges, and discounts can be distributed either:
+    - proportionally (based on each person's subtotal)
+    - equally (same amount per person)
     """
     try:
-        # Get bill data (this would come from a database in a real app)
-        # For now, we'll create a mock calculation
+        logger.info(f"Calculating split for {len(request.participants)} participants")
         
-        # Create person splits
-        person_splits = []
-        total_bill = 0.0
+        receipt = request.receipt_data
+        participants = {p.id: p for p in request.participants}
+        
+        # Validate participants exist
+        if not participants:
+            raise HTTPException(status_code=400, detail="At least one participant is required")
+        
+        # Initialize person splits
+        person_data: Dict[str, Dict[str, Any]] = {
+            pid: {
+                "person_id": pid,
+                "person_name": p.name,
+                "items": [],
+                "subtotal": 0.0
+            }
+            for pid, p in participants.items()
+        }
+        
+        # Track which items are assigned
+        assigned_indices = set()
+        unassigned_items = []
+        validation_warnings = []
+        
+        # Process item assignments
+        for assignment in request.item_assignments:
+            idx = assignment.item_index
+            
+            # Validate index
+            if idx < 0 or idx >= len(receipt.items):
+                validation_warnings.append(f"Invalid item index: {idx}")
+                continue
+            
+            item = receipt.items[idx]
+            assigned_indices.add(idx)
+            
+            # Validate person IDs
+            valid_person_ids = [pid for pid in assignment.person_ids if pid in participants]
+            if not valid_person_ids:
+                validation_warnings.append(f"No valid participants for item '{item.name}'")
+                continue
+            
+            # Calculate shares
+            if assignment.shares:
+                # Custom shares provided
+                total_share = sum(
+                    assignment.shares.get(pid, 0) 
+                    for pid in valid_person_ids
+                )
+                if total_share <= 0:
+                    # Fall back to equal split
+                    shares = {pid: 1.0 / len(valid_person_ids) for pid in valid_person_ids}
+                else:
+                    shares = {
+                        pid: assignment.shares.get(pid, 0) / total_share 
+                        for pid in valid_person_ids
+                    }
+            else:
+                # Equal split
+                shares = {pid: 1.0 / len(valid_person_ids) for pid in valid_person_ids}
+            
+            # Distribute item cost
+            item_total = item.total_price
+            
+            for pid in valid_person_ids:
+                share_ratio = shares[pid]
+                share_amount = round(item_total * share_ratio, 2)
+                
+                person_data[pid]["items"].append({
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                    "total_price": item.total_price,
+                    "share_ratio": share_ratio,
+                    "share_amount": share_amount,
+                    "shared_with": [
+                        participants[p].name for p in valid_person_ids if p != pid
+                    ] if len(valid_person_ids) > 1 else []
+                })
+                
+                person_data[pid]["subtotal"] += share_amount
+        
+        # Find unassigned items
+        for idx, item in enumerate(receipt.items):
+            if idx not in assigned_indices:
+                unassigned_items.append({
+                    "index": idx,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                    "total_price": item.total_price
+                })
+        
+        if unassigned_items:
+            validation_warnings.append(
+                f"{len(unassigned_items)} item(s) not assigned to anyone"
+            )
+        
+        # Calculate totals
+        items_total = sum(item.total_price for item in receipt.items)
+        total_subtotal = sum(pd["subtotal"] for pd in person_data.values())
+        
+        # Extract taxes and charges
         total_tax = 0.0
         total_service_charge = 0.0
         total_discount = 0.0
         
-        # Mock calculation - in real app, this would use actual bill data
-        for i, person_id in enumerate(split_request.participants):
-            # Mock person data
-            person_name = f"Person {i+1}"
+        for tc in receipt.taxes_or_charges:
+            amount = tc.amount
+            name_lower = tc.name.lower()
             
-            # Mock item assignments
-            mock_items = [
-                {
-                    "name": f"Item {i+1}A",
-                    "quantity": 1,
-                    "unit_price": 10.0,
-                    "total": 10.0
-                },
-                {
-                    "name": f"Item {i+1}B", 
-                    "quantity": 2,
-                    "unit_price": 5.0,
-                    "total": 10.0
-                }
-            ]
+            if amount < 0:
+                # Negative amount = discount
+                total_discount += abs(amount)
+            elif "service" in name_lower or "svc" in name_lower:
+                total_service_charge += amount
+            else:
+                # Default to tax
+                total_tax += amount
+        
+        # Distribute tax, service charge, and discount
+        person_splits = []
+        
+        for pid, data in person_data.items():
+            subtotal = data["subtotal"]
             
-            subtotal = sum(item["total"] for item in mock_items)
-            tax_share = subtotal * 0.1  # 10% tax
-            service_charge_share = subtotal * 0.05  # 5% service charge
-            discount_share = 0.0  # No discount for demo
-            total = subtotal + tax_share + service_charge_share - discount_share
+            # Calculate proportion for this person
+            if total_subtotal > 0:
+                proportion = subtotal / total_subtotal
+            else:
+                proportion = 1.0 / len(participants) if participants else 0
             
-            person_split = PersonSplit(
-                person_id=person_id,
-                person_name=person_name,
-                items=mock_items,
-                subtotal=subtotal,
-                tax_share=tax_share,
-                service_charge_share=service_charge_share,
-                discount_share=discount_share,
-                total=total
+            # Tax share
+            if request.tax_distribution == "equal":
+                tax_share = total_tax / len(participants) if participants else 0
+            else:
+                tax_share = total_tax * proportion
+            
+            # Service charge share
+            if request.service_charge_distribution == "equal":
+                service_share = total_service_charge / len(participants) if participants else 0
+            else:
+                service_share = total_service_charge * proportion
+            
+            # Discount share
+            if request.discount_distribution == "equal":
+                discount_share = total_discount / len(participants) if participants else 0
+            else:
+                discount_share = total_discount * proportion
+            
+            # Calculate total
+            total = subtotal + tax_share + service_share - discount_share
+            
+            person_splits.append(PersonSplitResult(
+                person_id=pid,
+                person_name=data["person_name"],
+                items=data["items"],
+                subtotal=round(subtotal, 2),
+                tax_share=round(tax_share, 2),
+                service_charge_share=round(service_share, 2),
+                discount_share=round(discount_share, 2),
+                total=round(total, 2)
+            ))
+        
+        # Verify totals add up
+        calculated_grand_total = sum(ps.total for ps in person_splits)
+        if abs(calculated_grand_total - receipt.grand_total) > 0.05:
+            validation_warnings.append(
+                f"Split total ({calculated_grand_total:.2f}) differs from receipt total ({receipt.grand_total:.2f})"
             )
-            
-            person_splits.append(person_split)
-            total_bill += total
-            total_tax += tax_share
-            total_service_charge += service_charge_share
-            total_discount += discount_share
         
-        # Create split calculation
-        split_id = str(uuid.uuid4())
-        split_calculation = SplitCalculation(
-            bill_id=split_request.bill_id,
-            participants=split_request.participants,
-            person_splits=person_splits,
-            total_bill=total_bill,
-            total_tax=total_tax,
-            total_service_charge=total_service_charge,
-            total_discount=total_discount,
-            calculation_method=split_request.calculation_method
-        )
+        logger.info(f"Split calculated: {len(person_splits)} participants, total: {calculated_grand_total:.2f}")
         
-        # Store split calculation
-        splits_storage[split_id] = split_calculation
-        
-        logger.info(f"Successfully calculated split {split_id}")
-        
-        return SplitCalculationResponseSchema(
+        return SplitCalculationResponse(
             success=True,
-            message="Split calculation completed successfully",
-            calculation={
-                "split_id": split_id,
-                "bill_id": split_request.bill_id,
-                "participants": split_request.participants,
-                "person_splits": [
-                    {
-                        "person_id": split.person_id,
-                        "person_name": split.person_name,
-                        "items": split.items,
-                        "subtotal": split.subtotal,
-                        "tax_share": split.tax_share,
-                        "service_charge_share": split.service_charge_share,
-                        "discount_share": split.discount_share,
-                        "total": split.total
-                    }
-                    for split in person_splits
-                ],
-                "totals": {
-                    "total_bill": total_bill,
-                    "total_tax": total_tax,
-                    "total_service_charge": total_service_charge,
-                    "total_discount": total_discount
-                },
-                "calculation_method": split_request.calculation_method
-            }
+            message="Split calculated successfully",
+            person_splits=person_splits,
+            totals=SplitTotals(
+                items_total=round(items_total, 2),
+                subtotal=round(receipt.subtotal, 2),
+                total_tax=round(total_tax, 2),
+                total_service_charge=round(total_service_charge, 2),
+                total_discount=round(total_discount, 2),
+                grand_total=round(receipt.grand_total, 2)
+            ),
+            unassigned_items=unassigned_items,
+            validation_warnings=validation_warnings
         )
-        
-    except Exception as e:
-        logger.error(f"Error calculating split: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get("/{split_id}")
-async def get_split_calculation(
-    split_id: str,
-    current_user = Depends(get_current_user),
-    logger = Depends(get_logger_dependency)
-):
-    """
-    Get split calculation by ID.
-    """
-    try:
-        if split_id not in splits_storage:
-            raise HTTPException(status_code=404, detail="Split calculation not found")
-        
-        split_calculation = splits_storage[split_id]
-        
-        return {
-            "split_id": split_id,
-            "bill_id": split_calculation.bill_id,
-            "participants": split_calculation.participants,
-            "person_splits": [
-                {
-                    "person_id": split.person_id,
-                    "person_name": split.person_name,
-                    "items": split.items,
-                    "subtotal": split.subtotal,
-                    "tax_share": split.tax_share,
-                    "service_charge_share": split.service_charge_share,
-                    "discount_share": split.discount_share,
-                    "total": split.total
-                }
-                for split in split_calculation.person_splits
-            ],
-            "totals": {
-                "total_bill": split_calculation.total_bill,
-                "total_tax": split_calculation.total_tax,
-                "total_service_charge": split_calculation.total_service_charge,
-                "total_discount": split_calculation.total_discount
-            },
-            "calculation_method": split_calculation.calculation_method
-        }
-        
+    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting split calculation {split_id}: {str(e)}")
+        logger.error(f"Error calculating split: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/")
-async def list_split_calculations(
-    current_user = Depends(get_current_user),
-    logger = Depends(get_logger_dependency)
+@router.post("/preview")
+async def preview_equal_split(
+    receipt_data: ReceiptDataSchema,
+    participant_count: int,
+    logger=Depends(get_logger_dependency)
 ):
     """
-    List all split calculations for the current user.
+    Quick preview of an equal split without item assignments.
+    
+    Useful for showing users what they would owe if splitting equally.
     """
     try:
-        calculations = []
-        for split_id, split_calculation in splits_storage.items():
-            calculations.append({
-                "split_id": split_id,
-                "bill_id": split_calculation.bill_id,
-                "participants": split_calculation.participants,
-                "total_bill": split_calculation.total_bill,
-                "calculation_method": split_calculation.calculation_method
-            })
+        if participant_count < 1:
+            raise HTTPException(status_code=400, detail="At least 1 participant required")
         
-        return {
-            "calculations": calculations,
-            "total": len(calculations)
-        }
+        # Calculate totals
+        items_total = sum(item.total_price for item in receipt_data.items)
         
-    except Exception as e:
-        logger.error(f"Error listing split calculations: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.delete("/{split_id}")
-async def delete_split_calculation(
-    split_id: str,
-    current_user = Depends(get_current_user),
-    logger = Depends(get_logger_dependency)
-):
-    """
-    Delete split calculation by ID.
-    """
-    try:
-        if split_id not in splits_storage:
-            raise HTTPException(status_code=404, detail="Split calculation not found")
+        total_tax = 0.0
+        total_service_charge = 0.0
+        total_discount = 0.0
         
-        del splits_storage[split_id]
+        for tc in receipt_data.taxes_or_charges:
+            if tc.amount < 0:
+                total_discount += abs(tc.amount)
+            elif "service" in tc.name.lower():
+                total_service_charge += tc.amount
+            else:
+                total_tax += tc.amount
         
-        logger.info(f"Successfully deleted split calculation {split_id}")
+        per_person = receipt_data.grand_total / participant_count
         
         return {
             "success": True,
-            "message": "Split calculation deleted successfully"
+            "participant_count": participant_count,
+            "per_person_total": round(per_person, 2),
+            "totals": {
+                "items_total": round(items_total, 2),
+                "subtotal": round(receipt_data.subtotal, 2),
+                "total_tax": round(total_tax, 2),
+                "total_service_charge": round(total_service_charge, 2),
+                "total_discount": round(total_discount, 2),
+                "grand_total": round(receipt_data.grand_total, 2)
+            }
         }
-        
+    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting split calculation {split_id}: {str(e)}")
+        logger.error(f"Error calculating preview: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,3 +1,7 @@
+# backend/app/schemas/receipt_schema.py
+"""
+Receipt API schemas for request/response serialization.
+"""
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -12,7 +16,7 @@ class BillItemSchema(BaseModel):
     name: str
     quantity: int
     unit_price: float
-    total_price: float  # Changed from 'total' to 'total_price' to match requirements
+    total_price: float
 
 
 class TaxOrChargeSchema(BaseModel):
@@ -22,27 +26,23 @@ class TaxOrChargeSchema(BaseModel):
 
 
 class ReceiptDataSchema(BaseModel):
+    """Schema for receipt data in API requests/responses."""
     receipt_number: str
     date: str
     time: str
     store: StoreInfoSchema
     items: List[BillItemSchema]
     subtotal: float
-    taxes_or_charges: List[TaxOrChargeSchema] = []  # New field to replace individual tax/service_charge
-    grand_total: float  # Changed from 'total_amount' to 'grand_total' to match requirements
+    taxes_or_charges: List[TaxOrChargeSchema] = []
+    grand_total: float
     payment_method: str
     transaction_id: Optional[str] = None
     notes: Optional[str] = None
 
 
-class ReceiptUploadResponse(BaseModel):
-    success: bool
-    message: str
-    receipt_id: Optional[str] = None
-    raw_text: Optional[str] = None
-
-
 class ReceiptProcessResponse(BaseModel):
+    """Response from receipt processing endpoint."""
     success: bool
     message: str
     processed_data: Optional[ReceiptDataSchema] = None
+    raw_text: Optional[str] = None  # OCR text for debugging/reference

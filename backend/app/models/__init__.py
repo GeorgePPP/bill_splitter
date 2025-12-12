@@ -1,6 +1,4 @@
-from .bill import BillSplit, SplitResult, BillItemAssignment
-from .person import Person, PersonAssignment
-from .receipt import Receipt, ReceiptData, StoreInfo, BillItem
-from .split import PersonSplit, SplitCalculation
+# backend/app/models/__init__.py
+from .receipt import ReceiptData, StoreInfo, BillItem, TaxOrCharge
 
-__all__ = ["BillSplit", "SplitResult", "BillItemAssignment", "Person", "PersonAssignment", "Receipt", "ReceiptData", "StoreInfo", "BillItem", "PersonSplit", "SplitCalculation"]
+__all__ = ["ReceiptData", "StoreInfo", "BillItem", "TaxOrCharge"]
