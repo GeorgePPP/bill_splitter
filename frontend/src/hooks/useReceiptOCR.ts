@@ -30,16 +30,23 @@ export const useReceiptOCR = () => {
     needsValidation: false,
   });
 
-  const uploadReceipt = useCallback(async (file: File) => {
+  /**
+   * Upload and process receipt in a single call (stateless).
+   * Backend handles: Upload → OCR → AI Extraction → Validation
+   */
+  const uploadAndProcessReceipt = useCallback(async (file: File) => {
     setState(prev => ({
       ...prev,
       isUploading: true,
+      isProcessing: true,
       uploadProgress: 0,
       error: null,
+      validationError: null,
+      needsValidation: false,
     }));
 
     try {
-      const response = await receiptService.uploadReceipt(
+      const response = await receiptService.processReceipt(
         file,
         (progress) => {
           setState(prev => ({
@@ -52,77 +59,52 @@ export const useReceiptOCR = () => {
       setState(prev => ({
         ...prev,
         isUploading: false,
-        uploadProgress: 100,
-        receiptId: response.receipt_id || null,
-        rawText: response.raw_text || null,
-      }));
-
-      return response;
-    } catch (error) {
-      const apiError = error as ApiError;
-      setState(prev => ({
-        ...prev,
-        isUploading: false,
-        uploadProgress: 0,
-        error: apiError.message || 'Failed to upload receipt',
-      }));
-      throw error;
-    }
-  }, []);
-
-  const processReceipt = useCallback(async (receiptId: string) => {
-    setState(prev => ({
-      ...prev,
-      isProcessing: true,
-      error: null,
-      validationError: null,
-      needsValidation: false,
-    }));
-
-    try {
-      const response = await receiptService.processReceipt(receiptId);
-
-      setState(prev => ({
-        ...prev,
         isProcessing: false,
+        uploadProgress: 100,
         processedData: response.processed_data || null,
         extractedData: response.processed_data || null,
+        rawText: response.ocr_text || null,
         needsValidation: true, // Always show validation modal
-        validationError: null, // Clear any previous validation errors for successful processing
+        validationError: null,
       }));
-      
+
       console.log('[useReceiptOCR] Successfully processed receipt, set needsValidation=true');
 
       return response;
     } catch (error) {
       const apiError = error as ApiError;
       console.log('[useReceiptOCR] Process receipt error:', apiError);
-      
+
       // Check if this is a validation error (422)
       if (apiError.status === 422) {
         // Extract the data from error details
         const errorDetails = apiError.details?.detail || apiError.details;
         const extractedData = errorDetails?.extracted_data;
-        
+        const rawText = errorDetails?.raw_text;
+
         console.log('[useReceiptOCR] Validation error detected:', {
           status: apiError.status,
           errorDetails,
           extractedData,
           hasExtractedData: !!extractedData
         });
-        
+
         setState(prev => ({
           ...prev,
+          isUploading: false,
           isProcessing: false,
+          uploadProgress: 0,
           validationError: errorDetails || apiError.message,
           extractedData: extractedData || null,
+          rawText: rawText || null,
           needsValidation: true,
-          receiptId: receiptId, // Ensure receipt ID is preserved
         }));
       } else {
         setState(prev => ({
           ...prev,
+          isUploading: false,
           isProcessing: false,
+          uploadProgress: 0,
           error: apiError.message || 'Failed to process receipt',
           needsValidation: false,
         }));
@@ -131,7 +113,11 @@ export const useReceiptOCR = () => {
     }
   }, []);
 
-  const reprocessWithCorrectedData = useCallback(async (receiptId: string, correctedData: any) => {
+  /**
+   * Validate user-corrected receipt data (stateless).
+   * No receiptId needed - just validates the corrected data.
+   */
+  const validateCorrectedData = useCallback(async (correctedData: any) => {
     setState(prev => ({
       ...prev,
       isProcessing: true,
@@ -141,27 +127,31 @@ export const useReceiptOCR = () => {
     }));
 
     try {
-      const response = await receiptService.reprocessReceipt(receiptId, correctedData);
+      const response = await receiptService.validateCorrectedReceipt(correctedData);
 
       setState(prev => ({
         ...prev,
         isProcessing: false,
         processedData: response.processed_data || null,
         extractedData: response.processed_data || null,
-        needsValidation: true, // Always show validation modal
-        validationError: null, // Clear any previous validation errors for successful processing
+        needsValidation: false, // Validation passed, no need to show modal again
+        validationError: null,
       }));
+
+      console.log('[useReceiptOCR] Corrected data validated successfully');
 
       return response;
     } catch (error) {
       const apiError = error as ApiError;
-      
+
       // Check if this is still a validation error
       if (apiError.status === 422) {
+        const errorDetails = apiError.details?.detail || apiError.details;
+
         setState(prev => ({
           ...prev,
           isProcessing: false,
-          validationError: apiError.details || apiError.message,
+          validationError: errorDetails || apiError.message,
           extractedData: correctedData, // Keep the user's corrected data
           needsValidation: true,
         }));
@@ -169,56 +159,13 @@ export const useReceiptOCR = () => {
         setState(prev => ({
           ...prev,
           isProcessing: false,
-          error: apiError.message || 'Failed to reprocess receipt',
+          error: apiError.message || 'Failed to validate receipt',
         }));
       }
       throw error;
     }
   }, []);
 
-  const getReceipt = useCallback(async (receiptId: string) => {
-    try {
-      const response = await receiptService.getReceipt(receiptId);
-      
-      setState(prev => ({
-        ...prev,
-        receiptId: response.id,
-        rawText: response.raw_text,
-        processedData: response.processed_data || null,
-        extractedData: response.processed_data || null,
-      }));
-
-      return response;
-    } catch (error) {
-      const apiError = error as ApiError;
-      setState(prev => ({
-        ...prev,
-        error: apiError.message || 'Failed to get receipt',
-      }));
-      throw error;
-    }
-  }, []);
-
-  const deleteReceipt = useCallback(async (receiptId: string) => {
-    try {
-      await receiptService.deleteReceipt(receiptId);
-      
-      setState(prev => ({
-        ...prev,
-        receiptId: null,
-        rawText: null,
-        processedData: null,
-        extractedData: null,
-      }));
-    } catch (error) {
-      const apiError = error as ApiError;
-      setState(prev => ({
-        ...prev,
-        error: apiError.message || 'Failed to delete receipt',
-      }));
-      throw error;
-    }
-  }, []);
 
   const reset = useCallback(() => {
     setState({
@@ -245,11 +192,8 @@ export const useReceiptOCR = () => {
   return {
     state,
     actions: {
-      uploadReceipt,
-      processReceipt,
-      getReceipt,
-      deleteReceipt,
-      reprocessWithCorrectedData,
+      uploadAndProcessReceipt,
+      validateCorrectedData,
       reset,
       clearError,
     },

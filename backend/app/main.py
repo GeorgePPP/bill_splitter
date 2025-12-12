@@ -23,9 +23,10 @@ app = FastAPI(
 setup_cors(app)
 
 # Include routers - simplified, stateless
-app.include_router(health.router)
-app.include_router(receipt.router)
-app.include_router(split.router)
+# All routes are prefixed with /api to match frontend expectations
+app.include_router(health.router, prefix="/api")
+app.include_router(receipt.router, prefix="/api")
+app.include_router(split.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -39,12 +40,12 @@ async def root():
         "message": "Welcome to Bill Splitter API",
         "version": "2.0.0",
         "docs": "/docs",
-        "health": "/health",
+        "health": "/api/health",
         "endpoints": {
-            "process_receipt": "POST /receipt/process - Upload and process receipt image",
-            "validate_receipt": "POST /receipt/validate - Validate corrected receipt data",
-            "calculate_split": "POST /split/calculate - Calculate bill split",
-            "preview_split": "POST /split/preview - Preview equal split"
+            "process_receipt": "POST /api/receipt/process - Upload and process receipt image",
+            "validate_receipt": "POST /api/receipt/validate - Validate corrected receipt data",
+            "calculate_split": "POST /api/split/calculate - Calculate bill split",
+            "preview_split": "POST /api/split/preview - Preview equal split"
         }
     }
 
