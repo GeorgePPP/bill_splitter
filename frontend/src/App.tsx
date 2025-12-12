@@ -295,6 +295,17 @@ const App: React.FC = () => {
     }
   };
 
+  const handleBackFromItemAssignment = () => {
+    // Prefer returning to the last validation view so users can correct numbers
+    // without being dropped back into an empty "no receipt uploaded" state.
+    if (validationModal.actions.canReopenModal()) {
+      validationModal.actions.reopenModal();
+      return;
+    }
+
+    billSplitter.actions.prevStep();
+  };
+
   const handleStartOver = () => {
     // Reset all state and go back to step 1
     billSplitter.actions.reset();
@@ -310,11 +321,6 @@ const App: React.FC = () => {
   const handleShare = () => {
     // Implement sharing functionality
     console.log('Share results');
-  };
-
-  const handleDownload = () => {
-    // Implement download functionality
-    console.log('Download results');
   };
 
   const renderStep = () => {
@@ -360,7 +366,7 @@ const App: React.FC = () => {
               onRemovePersonFromSplit={handleRemovePersonFromSplit}
               onCloseSplitModal={handleCloseSplitModal}
               onNext={handleCalculateSplit}
-              onBack={billSplitter.actions.prevStep}
+              onBack={handleBackFromItemAssignment}
               disabled={billSplitter.state.isLoading}
               pendingAssignment={itemAssignment.state.pendingAssignment}
               pendingSplitModal={itemAssignment.state.pendingSplitModal}
@@ -378,7 +384,6 @@ const App: React.FC = () => {
             onStartOver={handleStartOver}
             onModifyAssignment={() => billSplitter.actions.goToStep(3)}
             onShare={handleShare}
-            onDownload={handleDownload}
             disabled={billSplitter.state.isLoading}
           />
         );

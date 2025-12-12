@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/UI/Card';
 import { Button } from '@/components/UI/Button';
 import { PersonSplit } from '@/types/split.types';
 import { formatCurrency } from '@/utils/formatters';
-import { Receipt, User, Calculator, Download, Share2, Users } from 'lucide-react';
+import { downloadFile } from '@/utils/fileHelpers';
+import { toPng } from 'html-to-image';
+import { Receipt, User, Calculator, Download, Share2, Users, Copy } from 'lucide-react';
 
 export interface SplitSummaryProps {
   personSplits: PersonSplit[];
@@ -14,7 +16,6 @@ export interface SplitSummaryProps {
   onStartOver: () => void;
   onModifyAssignment: () => void;
   onShare: () => void;
-  onDownload: () => void;
   disabled?: boolean;
 }
 
@@ -27,15 +28,161 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
   onStartOver,
   onModifyAssignment,
   onShare,
-  onDownload,
   disabled = false,
 }) => {
+  const exportRootRef = useRef<HTMLDivElement | null>(null);
+  const personCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [copiedByPersonId, setCopiedByPersonId] = useState<Record<string, boolean>>({});
+  const [isExportingPngByPersonId, setIsExportingPngByPersonId] = useState<Record<string, boolean>>({});
+  const [isExportingAllPng, setIsExportingAllPng] = useState(false);
+  const [isCopyingAll, setIsCopyingAll] = useState(false);
+  const [copiedAll, setCopiedAll] = useState(false);
+
   const handlePrint = () => {
     window.print();
   };
 
+  const canExport = useMemo(() => {
+    return typeof window !== 'undefined';
+  }, []);
+
+  const exportFilter = (node: HTMLElement) => {
+    return node.dataset?.exportIgnore !== 'true';
+  };
+
+  const getExportOptionsForNode = (node: HTMLElement) => {
+    const rect = node.getBoundingClientRect();
+    const width = Math.ceil(rect.width);
+    const height = Math.ceil(node.scrollHeight || rect.height);
+
+    return {
+      cacheBust: true,
+      pixelRatio: 2,
+      backgroundColor: '#ffffff',
+      filter: exportFilter,
+      width,
+      height,
+      style: {
+        marginLeft: '0',
+        marginRight: '0',
+        width: `${width}px`,
+        height: `${height}px`,
+      } as React.CSSProperties,
+    };
+  };
+
+  const buildPersonShareText = (split: PersonSplit) => {
+    const lines: string[] = [];
+    lines.push(`${split.person_name} owes ${formatCurrency(split.total)}`);
+    lines.push('');
+    lines.push('Items:');
+    for (const item of split.items as any[]) {
+      const qty = typeof item.quantity === 'number' ? item.quantity : 1;
+      const name = item.name ?? 'Item';
+      const price = formatCurrency(item.total_price ?? 0);
+      const splitSuffix = item.isSplit ? ` (${item.splitPercentage?.toFixed(1)}%)` : '';
+      lines.push(`- ${qty}x ${name}${splitSuffix}: ${price}`);
+    }
+    lines.push('');
+    lines.push(`Subtotal: ${formatCurrency(split.subtotal)}`);
+    lines.push(`Tax: ${formatCurrency(split.tax_share)}`);
+    lines.push(`Service charge: ${formatCurrency(split.service_charge_share)}`);
+    if (split.discount_share > 0) {
+      lines.push(`Discount: -${formatCurrency(split.discount_share)}`);
+    }
+    lines.push(`Total: ${formatCurrency(split.total)}`);
+    return lines.join('\n');
+  };
+
+  const buildAllShareText = () => {
+    const lines: string[] = [];
+    for (const split of personSplits) {
+      if (lines.length > 0) lines.push('', '—', '');
+      lines.push(buildPersonShareText(split));
+    }
+    return lines.join('\n');
+  };
+
+  const copyTextToClipboard = async (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  };
+
+  const handleCopyPerson = async (split: PersonSplit) => {
+    if (!canExport) return;
+    try {
+      await copyTextToClipboard(buildPersonShareText(split));
+      setCopiedByPersonId((prev) => ({ ...prev, [split.person_id]: true }));
+      window.setTimeout(() => {
+        setCopiedByPersonId((prev) => ({ ...prev, [split.person_id]: false }));
+      }, 1500);
+    } catch (e) {
+      console.error('Failed to copy split text', e);
+    }
+  };
+
+  const handleCopyAll = async () => {
+    if (!canExport) return;
+    setIsCopyingAll(true);
+    try {
+      await copyTextToClipboard(buildAllShareText());
+      setCopiedAll(true);
+      window.setTimeout(() => setCopiedAll(false), 1500);
+    } catch (e) {
+      console.error('Failed to copy all splits text', e);
+    } finally {
+      setIsCopyingAll(false);
+    }
+  };
+
+  const handleDownloadPersonPng = async (split: PersonSplit) => {
+    if (!canExport) return;
+    const node = personCardRefs.current[split.person_id];
+    if (!node) return;
+
+    setIsExportingPngByPersonId((prev) => ({ ...prev, [split.person_id]: true }));
+    try {
+      const dataUrl = await toPng(node, getExportOptionsForNode(node));
+      const safeName = split.person_name.trim().replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-');
+      downloadFile(dataUrl, `bill-split-${safeName || split.person_id}.png`);
+    } catch (e) {
+      console.error('Failed to export person split PNG', e);
+    } finally {
+      setIsExportingPngByPersonId((prev) => ({ ...prev, [split.person_id]: false }));
+    }
+  };
+
+  const handleDownloadAllPng = async () => {
+    if (!canExport) return;
+    const node = exportRootRef.current;
+    if (!node) return;
+
+    setIsExportingAllPng(true);
+    try {
+      const dataUrl = await toPng(node, getExportOptionsForNode(node));
+      downloadFile(dataUrl, 'bill-split-summary.png');
+    } catch (e) {
+      console.error('Failed to export full summary PNG', e);
+    } finally {
+      setIsExportingAllPng(false);
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div ref={exportRootRef} className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
       <Card>
         <CardHeader className="text-center">
@@ -90,9 +237,31 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
 
       {/* Person Splits */}
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-900">Individual Splits</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900">Individual Splits</h3>
+          <div className="flex items-center gap-2" data-export-ignore="true">
+            <Button
+              onClick={handleDownloadAllPng}
+              variant="outline"
+              size="sm"
+              disabled={disabled || isExportingAllPng}
+              leftIcon={<Download className="h-3 w-3" />}
+            >
+              {isExportingAllPng ? 'Downloading…' : 'Download All'}
+            </Button>
+            <Button
+              onClick={handleCopyAll}
+              variant="outline"
+              size="sm"
+              disabled={disabled || isCopyingAll}
+              leftIcon={<Copy className="h-3 w-3" />}
+            >
+              {copiedAll ? 'Copied All' : 'Copy All'}
+            </Button>
+          </div>
+        </div>
         {personSplits.map((split) => (
-          <Card key={split.person_id}>
+          <Card key={split.person_id} ref={(el: HTMLDivElement | null) => { personCardRefs.current[split.person_id] = el; }}>
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-3">
@@ -112,6 +281,27 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
                   </div>
                   <div className="text-sm text-gray-500">Total</div>
                 </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 mb-4" data-export-ignore="true">
+                <Button
+                  onClick={() => handleDownloadPersonPng(split)}
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled || isExportingPngByPersonId[split.person_id]}
+                  leftIcon={<Download className="h-3 w-3" />}
+                >
+                  {isExportingPngByPersonId[split.person_id] ? 'Downloading…' : 'Download'}
+                </Button>
+                <Button
+                  onClick={() => handleCopyPerson(split)}
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled}
+                  leftIcon={<Copy className="h-3 w-3" />}
+                >
+                  {copiedByPersonId[split.person_id] ? 'Copied' : 'Copy'}
+                </Button>
               </div>
 
               {/* Items breakdown */}
@@ -173,7 +363,7 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
 
       {/* Action Buttons */}
       <Card>
-        <CardContent className="p-6">
+        <CardContent className="p-6" data-export-ignore="true">
           <div className="flex flex-wrap gap-3 justify-center">
             <Button
               onClick={onModifyAssignment}
@@ -197,14 +387,6 @@ export const SplitSummary: React.FC<SplitSummaryProps> = ({
               leftIcon={<Receipt className="h-4 w-4" />}
             >
               Print Summary
-            </Button>
-            <Button
-              onClick={onDownload}
-              variant="outline"
-              disabled={disabled}
-              leftIcon={<Download className="h-4 w-4" />}
-            >
-              Download PDF
             </Button>
             <Button
               onClick={onShare}

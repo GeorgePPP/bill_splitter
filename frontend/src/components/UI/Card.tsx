@@ -6,13 +6,13 @@ export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   padding?: 'none' | 'sm' | 'md' | 'lg';
 }
 
-export const Card: React.FC<CardProps> = ({
+export const Card = React.forwardRef<HTMLDivElement, CardProps>(({
   children,
   variant = 'default',
   padding = 'md',
   className,
   ...props
-}) => {
+}, ref) => {
   const baseClasses = 'rounded-lg';
   
   const variantClasses = {
@@ -30,6 +30,7 @@ export const Card: React.FC<CardProps> = ({
 
   return (
     <div
+      ref={ref}
       className={clsx(
         baseClasses,
         variantClasses[variant],
@@ -41,7 +42,9 @@ export const Card: React.FC<CardProps> = ({
       {children}
     </div>
   );
-};
+});
+
+Card.displayName = 'Card';
 
 export const CardHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   children,
