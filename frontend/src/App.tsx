@@ -34,31 +34,36 @@ const App: React.FC = () => {
   const calculations = useCalculations();
   const validationModal = useValidationModal();
 
+  const { createNewSession, restoreSession } = session.actions;
+  const { restoreState } = billSplitter.actions;
+  const { updateExtractedData, markAsValidated } = validationModal.actions;
+  const { initializeAssignments } = itemAssignment.actions;
+
   // Create session if none exists (local only - instant)
   useEffect(() => {
     if (!session.state.sessionToken && !session.state.hasExistingSession) {
-      session.actions.createNewSession();
+      createNewSession();
     }
-  }, [session.state.sessionToken, session.state.hasExistingSession, session.actions]);
+  }, [session.state.sessionToken, session.state.hasExistingSession, createNewSession]);
 
   // Restore session data if available
   useEffect(() => {
     const restoreSessionData = async () => {
       if (session.state.hasExistingSession && session.state.sessionData) {
         console.log('Restoring session data from localStorage...');
-        const restoredData = await session.actions.restoreSession();
+        const restoredData = await restoreSession();
         
         if (restoredData) {
           // Restore bill splitter state
-          billSplitter.actions.restoreState(restoredData);
+          restoreState(restoredData);
           
           // If receipt data exists, restore validation modal state
           if (restoredData.receiptData) {
-            validationModal.actions.updateExtractedData(restoredData.receiptData);
-            validationModal.actions.markAsValidated(restoredData.receiptData);
+            updateExtractedData(restoredData.receiptData);
+            markAsValidated(restoredData.receiptData);
             
             // Initialize item assignments
-            itemAssignment.actions.initializeAssignments(restoredData.receiptData.items);
+            initializeAssignments(restoredData.receiptData.items);
           }
           
           console.log('Session data restored successfully');
@@ -67,7 +72,15 @@ const App: React.FC = () => {
     };
 
     restoreSessionData();
-  }, [session.state.hasExistingSession, session.state.sessionData, billSplitter.actions, validationModal.actions, itemAssignment.actions, session.actions]);
+  }, [
+    session.state.hasExistingSession,
+    session.state.sessionData,
+    restoreSession,
+    restoreState,
+    updateExtractedData,
+    markAsValidated,
+    initializeAssignments,
+  ]);
 
   const handleReceiptUpload = async (file: File) => {
     try {

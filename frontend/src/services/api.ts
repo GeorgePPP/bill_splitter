@@ -1,12 +1,14 @@
 import axios, { AxiosInstance, AxiosResponse, AxiosError } from 'axios';
 import { ApiResponse, ApiError } from '@/types/api.types';
 
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || '/api';
+
 class ApiClient {
   private client: AxiosInstance;
 
   constructor() {
     this.client = axios.create({
-      baseURL: '/api',
+      baseURL: API_BASE_URL,
       timeout: 120000,
       headers: {
         'Content-Type': 'application/json',

@@ -12,14 +12,15 @@ export default defineConfig({
   },
   server: {
     allowedHosts: [
+      'localhost',
+      '127.0.0.1',
       'ethyl-intersystem-immoderately.ngrok-free.dev',
     ],
     port: 3000,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        changeOrigin: true      
       }
     }
   }
