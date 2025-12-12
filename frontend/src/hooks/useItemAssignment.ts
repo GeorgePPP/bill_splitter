@@ -39,16 +39,33 @@ export interface ItemAssignmentState {
   } | null;
 }
 
+const convertToSessionFormat = (
+  assignments: ItemAssignment[]
+): Array<{ item: BillItem; assignedTo: string | null }> => {
+  return assignments.map(assignment => ({
+    item: assignment.item,
+    assignedTo: assignment.isMultipleAssignment ? null : assignment.assignedTo,
+  }));
+};
+
+const isSameItem = (a: BillItem, b: BillItem) => {
+  return (
+    a.name === b.name &&
+    a.quantity === b.quantity &&
+    a.unit_price === b.unit_price &&
+    a.total_price === b.total_price
+  );
+};
+
 export const useItemAssignment = (sessionActions?: {
-  saveItemAssignments: (assignments: Array<{ item: BillItem; assignedTo: string | null }>) => void;
+  saveItemAssignments?: (assignments: Array<{ item: BillItem; assignedTo: string | null }>) => void;
 }) => {
-  // Helper function to convert ItemAssignment to session format
-  const convertToSessionFormat = (assignments: ItemAssignment[]): Array<{ item: BillItem; assignedTo: string | null }> => {
-    return assignments.map(assignment => ({
-      item: assignment.item,
-      assignedTo: assignment.isMultipleAssignment ? null : assignment.assignedTo,
-    }));
-  };
+  const persistAssignments = useCallback((assignments: ItemAssignment[]) => {
+    if (sessionActions?.saveItemAssignments) {
+      sessionActions.saveItemAssignments(convertToSessionFormat(assignments));
+    }
+  }, [sessionActions]);
+
   const [state, setState] = useState<ItemAssignmentState>({
     assignments: [],
     selectedItem: null,
@@ -58,18 +75,48 @@ export const useItemAssignment = (sessionActions?: {
     pendingSplitModal: null,
   });
 
-  const initializeAssignments = useCallback((items: BillItem[]) => {
-    setState(prev => ({
-      ...prev,
-      assignments: items.map(item => ({
-        item,
-        assignedTo: null,
-        splits: [],
-        isMultipleAssignment: false,
-      })),
-      error: null,
-    }));
-  }, []);
+  const initializeAssignments = useCallback((
+    items: BillItem[],
+    savedAssignments?: Array<{ item: BillItem; assignedTo: string | null }>,
+    options?: { persist?: boolean }
+  ) => {
+    setState(prev => {
+      const savedAssignmentsCopy = savedAssignments ? [...savedAssignments] : [];
+      const assignments = items.map(item => {
+        let assignedTo: string | null = null;
+
+        if (savedAssignmentsCopy.length > 0) {
+          const matchIndex = savedAssignmentsCopy.findIndex(saved =>
+            isSameItem(saved.item, item)
+          );
+
+          if (matchIndex !== -1) {
+            assignedTo = savedAssignmentsCopy[matchIndex].assignedTo || null;
+            savedAssignmentsCopy.splice(matchIndex, 1);
+          }
+        }
+
+        return {
+          item,
+          assignedTo,
+          splits: [],
+          isMultipleAssignment: false,
+        };
+      });
+
+      if (options?.persist !== false) {
+        persistAssignments(assignments);
+      }
+
+      return {
+        ...prev,
+        assignments,
+        error: null,
+        pendingAssignment: null,
+        pendingSplitModal: null,
+      };
+    });
+  }, [persistAssignments]);
 
   const checkForDuplicateAssignment = useCallback((itemIndex: number, personId: string, participants: Person[]) => {
     const itemToAssign = state.assignments[itemIndex];
@@ -145,7 +192,7 @@ export const useItemAssignment = (sessionActions?: {
             }
           : assignment
       );
-      sessionActions?.saveItemAssignments(convertToSessionFormat(newAssignments));
+      persistAssignments(newAssignments);
       return {
         ...prev,
         assignments: newAssignments,
@@ -155,7 +202,7 @@ export const useItemAssignment = (sessionActions?: {
     });
     
     return { requiresConfirmation: false, duplicateInfo: null };
-  }, [checkForDuplicateAssignment, state.assignments, sessionActions, convertToSessionFormat]);
+  }, [checkForDuplicateAssignment, state.assignments, persistAssignments]);
 
   const assignItemToMultiplePeople = useCallback((itemIndex: number, personIds: string[], splitType: 'equal' | 'unequal' = 'equal', customSplits?: ItemSplit[], forceCustomSplit?: boolean) => {
     const assignment = state.assignments[itemIndex];
@@ -163,9 +210,8 @@ export const useItemAssignment = (sessionActions?: {
 
     // If only one person is selected, do a single assignment
     if (personIds.length === 1) {
-      setState(prev => ({
-        ...prev,
-        assignments: prev.assignments.map((assignment, index) =>
+      setState(prev => {
+        const newAssignments = prev.assignments.map((assignment, index) =>
           index === itemIndex
             ? { 
                 ...assignment, 
@@ -174,10 +220,15 @@ export const useItemAssignment = (sessionActions?: {
                 isMultipleAssignment: false,
               }
             : assignment
-        ),
-        pendingSplitModal: null,
-        error: null,
-      }));
+        );
+        persistAssignments(newAssignments);
+        return {
+          ...prev,
+          assignments: newAssignments,
+          pendingSplitModal: null,
+          error: null,
+        };
+      });
       return;
     }
 
@@ -219,9 +270,8 @@ export const useItemAssignment = (sessionActions?: {
       }
     }
 
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) =>
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) =>
         index === itemIndex
           ? {
               ...assignment,
@@ -230,16 +280,20 @@ export const useItemAssignment = (sessionActions?: {
               isMultipleAssignment: true,
             }
           : assignment
-      ),
-      pendingSplitModal: null,
-      error: null,
-    }));
-  }, [state.assignments]);
+      );
+      persistAssignments(newAssignments);
+      return {
+        ...prev,
+        assignments: newAssignments,
+        pendingSplitModal: null,
+        error: null,
+      };
+    });
+  }, [state.assignments, persistAssignments]);
 
   const unassignItem = useCallback((itemIndex: number) => {
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) =>
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) =>
         index === itemIndex
           ? { 
               ...assignment, 
@@ -248,15 +302,19 @@ export const useItemAssignment = (sessionActions?: {
               isMultipleAssignment: false,
             }
           : assignment
-      ),
-      error: null,
-    }));
-  }, []);
+      );
+      persistAssignments(newAssignments);
+      return {
+        ...prev,
+        assignments: newAssignments,
+        error: null,
+      };
+    });
+  }, [persistAssignments]);
 
   const removePersonFromSplit = useCallback((itemIndex: number, personId: string) => {
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) => {
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) => {
         if (index !== itemIndex) return assignment;
 
         const updatedSplits = assignment.splits.filter(split => split.personId !== personId);
@@ -291,15 +349,21 @@ export const useItemAssignment = (sessionActions?: {
             splits: redistributedSplits,
           };
         }
-      }),
-      error: null,
-    }));
-  }, []);
+      });
+
+      persistAssignments(newAssignments);
+
+      return {
+        ...prev,
+        assignments: newAssignments,
+        error: null,
+      };
+    });
+  }, [persistAssignments]);
 
   const updateSplitAmount = useCallback((itemIndex: number, personId: string, amount: number) => {
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) => {
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) => {
         if (index !== itemIndex) return assignment;
 
         const updatedSplits = assignment.splits.map(split => 
@@ -316,15 +380,21 @@ export const useItemAssignment = (sessionActions?: {
           ...assignment,
           splits: updatedSplits,
         };
-      }),
-      error: null,
-    }));
-  }, []);
+      });
+
+      persistAssignments(newAssignments);
+
+      return {
+        ...prev,
+        assignments: newAssignments,
+        error: null,
+      };
+    });
+  }, [persistAssignments]);
 
   const reassignItem = useCallback((itemIndex: number, newPersonId: string) => {
-    setState(prev => ({
-      ...prev,
-      assignments: prev.assignments.map((assignment, index) =>
+    setState(prev => {
+      const newAssignments = prev.assignments.map((assignment, index) =>
         index === itemIndex
           ? { 
               ...assignment, 
@@ -333,10 +403,17 @@ export const useItemAssignment = (sessionActions?: {
               isMultipleAssignment: false,
             }
           : assignment
-      ),
-      error: null,
-    }));
-  }, []);
+      );
+
+      persistAssignments(newAssignments);
+
+      return {
+        ...prev,
+        assignments: newAssignments,
+        error: null,
+      };
+    });
+  }, [persistAssignments]);
 
   const selectItem = useCallback((itemIndex: number | null) => {
     setState(prev => ({
@@ -457,24 +534,27 @@ export const useItemAssignment = (sessionActions?: {
       if (!prev.pendingAssignment) return prev;
 
       const { itemIndex, personId } = prev.pendingAssignment;
+      const newAssignments = prev.assignments.map((assignment, index) =>
+        index === itemIndex
+          ? { 
+              ...assignment, 
+              assignedTo: personId,
+              splits: [],
+              isMultipleAssignment: false,
+            }
+          : assignment
+      );
+
+      persistAssignments(newAssignments);
       
       return {
         ...prev,
-        assignments: prev.assignments.map((assignment, index) =>
-          index === itemIndex
-            ? { 
-                ...assignment, 
-                assignedTo: personId,
-                splits: [],
-                isMultipleAssignment: false,
-              }
-            : assignment
-        ),
+        assignments: newAssignments,
         pendingAssignment: null,
         error: null,
       };
     });
-  }, []);
+  }, [persistAssignments]);
 
   const cancelPendingAssignment = useCallback(() => {
     setState(prev => ({
@@ -492,6 +572,7 @@ export const useItemAssignment = (sessionActions?: {
   }, []);
 
   const reset = useCallback(() => {
+    persistAssignments([]);
     setState({
       assignments: [],
       selectedItem: null,
@@ -500,7 +581,7 @@ export const useItemAssignment = (sessionActions?: {
       pendingAssignment: null,
       pendingSplitModal: null,
     });
-  }, []);
+  }, [persistAssignments]);
 
   return {
     state,

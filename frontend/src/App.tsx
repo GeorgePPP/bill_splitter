@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from '@/components/Layout/Header';
 import { Footer } from '@/components/Layout/Footer';
 import { Container } from '@/components/Layout/Container';
@@ -30,7 +30,7 @@ const App: React.FC = () => {
   });
   const receiptOCR = useReceiptOCR();
   const personManager = usePersonManager();
-  const itemAssignment = useItemAssignment();
+  const itemAssignment = useItemAssignment(session.actions);
   const calculations = useCalculations();
   const validationModal = useValidationModal();
 
@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const { restoreState } = billSplitter.actions;
   const { updateExtractedData, markAsValidated } = validationModal.actions;
   const { initializeAssignments } = itemAssignment.actions;
+  const hasRestoredSessionRef = useRef(false);
 
   // Create session if none exists (local only - instant)
   useEffect(() => {
@@ -49,6 +50,7 @@ const App: React.FC = () => {
   // Restore session data if available
   useEffect(() => {
     const restoreSessionData = async () => {
+      if (hasRestoredSessionRef.current) return;
       if (session.state.hasExistingSession && session.state.sessionData) {
         console.log('Restoring session data from localStorage...');
         const restoredData = await restoreSession();
@@ -62,11 +64,16 @@ const App: React.FC = () => {
             updateExtractedData(restoredData.receiptData);
             markAsValidated(restoredData.receiptData);
             
-            // Initialize item assignments
-            initializeAssignments(restoredData.receiptData.items);
+            // Initialize item assignments (hydrate only; don't re-save to session)
+            initializeAssignments(
+              restoredData.receiptData.items,
+              restoredData.itemAssignments,
+              { persist: false }
+            );
           }
           
           console.log('Session data restored successfully');
+          hasRestoredSessionRef.current = true;
         }
       }
     };
@@ -205,23 +212,39 @@ const App: React.FC = () => {
   };
 
   const handleAssignItem = (itemIndex: number, personId: string) => {
-    itemAssignment.actions.assignItem(itemIndex, personId);
+    itemAssignment.actions.assignItem(
+      itemIndex,
+      personId,
+      billSplitter.state.participants
+    );
   };
 
-  const handleAssignItemToMultiplePeople = (itemIndex: number) => {
-    itemAssignment.actions.openSplitModal(itemIndex);
+  const handleAssignItemToMultiplePeople = (
+    itemIndex: number,
+    personIds: string[],
+    splitType: 'equal' | 'unequal',
+    customSplits?: ItemSplit[],
+    forceCustomSplit?: boolean
+  ) => {
+    itemAssignment.actions.assignItemToMultiplePeople(
+      itemIndex,
+      personIds,
+      splitType,
+      customSplits,
+      forceCustomSplit
+    );
   };
 
-  const handleConfirmAssignment = (personId: string) => {
-    itemAssignment.actions.confirmAssignment(personId);
+  const handleConfirmAssignment = () => {
+    itemAssignment.actions.confirmPendingAssignment();
   };
 
   const handleCancelAssignment = () => {
-    itemAssignment.actions.cancelAssignment();
+    itemAssignment.actions.cancelPendingAssignment();
   };
 
-  const handleRemovePersonFromSplit = (personId: string) => {
-    itemAssignment.actions.removePersonFromSplit(personId);
+  const handleRemovePersonFromSplit = (itemIndex: number, personId: string) => {
+    itemAssignment.actions.removePersonFromSplit(itemIndex, personId);
   };
 
   const handleCloseSplitModal = () => {
@@ -235,9 +258,9 @@ const App: React.FC = () => {
 
     if (receiptData && assignments && participants) {
       const result = calculations.actions.calculateSplit(
-        receiptData,
+        participants,
         assignments,
-        participants
+        receiptData
       );
       
       // Save split results to session
